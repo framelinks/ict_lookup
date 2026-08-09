@@ -4,473 +4,531 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Parish ICT Desk</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.tailwindcss.com"></script>
-<script>
-  tailwind.config = {
-    theme: {
-      extend: {
-        colors: {
-          ink: '#1B2430',
-          parchment: '#F6F3EC',
-          brass: '#B08D57',
-          rust: '#B0532C',
-          moss: '#3F5B4A'
-        },
-        fontFamily: {
-          serif: ['Fraunces', 'serif'],
-          sans: ['Inter', 'sans-serif']
-        }
-      }
-    }
-  }
-</script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
 <style>
-  body { font-family: 'Inter', sans-serif; background: #F6F3EC; }
-  .font-serif { font-family: 'Fraunces', serif; }
-  ::-webkit-scrollbar { width: 8px; }
-  ::-webkit-scrollbar-thumb { background: #B08D57; border-radius: 4px; }
-  .status-pill { font-size: 0.7rem; letter-spacing: 0.03em; text-transform: uppercase; font-weight: 600; padding: 0.2rem 0.6rem; border-radius: 999px; }
-  .st-Pending { background:#FDF0E3; color:#B0532C; }
-  .st-Assigned { background:#EAF0FB; color:#2C4E9E; }
-  .st-InProgress { background:#EAF0FB; color:#2C4E9E; }
-  .st-Resolved { background:#E9F3EC; color:#3F5B4A; }
-  .st-Closed { background:#EDEDED; color:#555; }
-  .st-Approved { background:#E9F3EC; color:#3F5B4A; }
-  .st-Rejected { background:#FBE9E7; color:#A02E1F; }
-  .st-Cancelled { background:#EDEDED; color:#555; }
-  .tab-btn.active { border-color: #1B2430; color: #1B2430; }
-  .tab-btn { border-color: transparent; color: #8a8578; }
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-thumb { background: #64748b; border-radius: 3px; }
+  iframe.data { width: 100%; height: 100%; border: none; background: white; }
+  @media (max-width: 768px) {
+    .menu { position: fixed; inset: 0; z-index: 50; transform: translateX(-100%); transition: transform .3s ease; }
+    .menu.open { transform: translateX(0); }
+  }
 </style>
 </head>
-<body class="text-ink min-h-screen">
+<body class="bg-slate-100 text-slate-800 antialiased h-screen overflow-hidden">
+  <div id="root" class="flex h-full">
 
-<div id="app"></div>
+    <!-- Sidebar -->
+    <aside id="menu" class="menu w-64 bg-slate-900 text-white flex-shrink-0 flex flex-col">
+      <div class="p-4 border-b border-slate-700 flex items-center justify-between">
+        <h1 class="text-lg font-bold tracking-wide">Parish ICT Desk</h1>
+        <button id="closeMenuBtn" class="md:hidden text-slate-400 hover:text-white">
+          <i class="fa fa-times"></i>
+        </button>
+      </div>
+      <nav id="menuList" class="flex-1 overflow-y-auto p-3 space-y-1"></nav>
+      <div id="userBox" class="p-3 border-t border-slate-700 text-xs text-slate-400"></div>
+    </aside>
+
+    <!-- Main -->
+    <main class="flex-1 flex flex-col min-w-0">
+      <header class="bg-white border-b border-slate-200 px-4 py-3 flex items-center justify-between gap-3 shadow-sm">
+        <div class="flex items-center gap-3">
+          <button id="openMenuBtn" class="md:hidden p-2 rounded-lg hover:bg-slate-100">
+            <i class="fa fa-bars"></i>
+          </button>
+          <div>
+            <h2 id="pageTitle" class="font-semibold text-lg">Select a section</h2>
+            <p id="pageInfo" class="text-xs text-slate-500"></p>
+          </div>
+        </div>
+        <button id="bellBtn" class="relative p-2 rounded-lg hover:bg-slate-100 text-slate-600" title="Notifications">
+          <i class="fa fa-bell"></i>
+          <span id="bellDot" class="hidden absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-rose-500"></span>
+        </button>
+      </header>
+
+      <div id="content" class="flex-1 relative overflow-hidden">
+        <iframe id="mainFrame" class="data absolute inset-0"
+          srcdoc="<div style='padding:2rem;font-family:system-ui;color:#64748b'>Select a section from the menu.</div>">
+        </iframe>
+      </div>
+    </main>
+
+    <!-- Fullsheet -->
+    <section id="fullSheet" class="fixed inset-0 z-50 bg-white flex flex-col hidden">
+      <div class="flex items-center justify-between px-4 py-3 border-b border-slate-200 bg-slate-50">
+        <h3 id="fullSheetTitle" class="font-semibold text-lg"></h3>
+        <button id="closeFullSheetBtn" class="p-2 rounded-lg hover:bg-slate-200">
+          <i class="fa fa-times text-lg"></i>
+        </button>
+      </div>
+      <iframe id="fullFrame" class="data flex-1"></iframe>
+    </section>
+  </div>
 
 <script>
-const API = '/api';
-let state = {
-  token: localStorage.getItem('token') || null,
-  user: JSON.parse(localStorage.getItem('user') || 'null'),
-  view: 'home',
-  tab: 'tickets',
-  items: [], tickets: [], bookings: [], faqs: [], announcements: [], notifications: [], users: [], stats: null,
-  error: null
-};
+  // ============================================
+  // STATE — one object, one render(). Actions only call useState;
+  // nothing outside render() touches the DOM directly.
+  // ============================================
+  let state = {
+    token: localStorage.getItem('token') || null,
+    user: JSON.parse(localStorage.getItem('user') || 'null'),
+    activeTab: '',
+    pageInfo: '',
+    isMenuOpen: false,
+    data: {},               // fetched records, keyed by endpoint name
+    error: '',
+    fullSheet: { active: false, title: '', content: null }
+  };
 
-function setState(patch) { Object.assign(state, patch); render(); }
+  function useState(key, value) {
+    if (arguments.length === 1) return state[key];
+    state = typeof key === 'object' ? { ...state, ...key } : { ...state, [key]: value };
+    render();
+  }
 
-async function api(path, opts = {}) {
-  const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
-  if (state.token) headers['Authorization'] = 'Bearer ' + state.token;
-  const res = await fetch(API + path, { ...opts, headers });
-  let data = {};
-  try { data = await res.json(); } catch (e) {}
-  if (!res.ok) throw new Error(data.error || 'Request failed');
-  return data;
-}
+  // ============================================
+  // API
+  // ============================================
+  const API = '/api';
+  async function api(path, opts = {}) {
+    const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
+    if (state.token) headers.Authorization = 'Bearer ' + state.token;
+    const res = await fetch(API + path, { ...opts, headers });
+    let body = {};
+    try { body = await res.json(); } catch (_) { /* no body */ }
+    if (!res.ok) throw new Error(body.error || 'Request failed');
+    return body;
+  }
 
-function login(token, user) {
-  state.token = token; state.user = user;
-  localStorage.setItem('token', token);
-  localStorage.setItem('user', JSON.stringify(user));
-  setState({ view: 'dashboard', tab: 'tickets' });
-  loadDashboardData();
-}
-function logout() {
-  localStorage.removeItem('token'); localStorage.removeItem('user');
-  setState({ token: null, user: null, view: 'home' });
-}
+  function loginSuccess(token, user) {
+    localStorage.setItem('token', token);
+    localStorage.setItem('user', JSON.stringify(user));
+    useState({ token, user, activeTab: 'home', error: '' });
+  }
+  function logout() {
+    localStorage.removeItem('token'); localStorage.removeItem('user');
+    useState({ token: null, user: null, activeTab: 'home', data: {} });
+  }
 
-async function loadDashboardData() {
-  try {
-    const [items, tickets, bookings, faqs, announcements, notifications] = await Promise.all([
-      api('/items'), api('/tickets'), api('/bookings'), api('/faqs'), api('/announcements'), api('/notifications')
-    ]);
-    setState({ items, tickets, bookings, faqs, announcements, notifications });
-    if (state.user.role === 'Admin') {
-      const [users, stats] = await Promise.all([api('/admin/users'), api('/admin/stats')]);
-      setState({ users, stats });
+  // ============================================
+  // SECTIONS — each tab owns which endpoints feed it and how it renders.
+  // Content is built as an HTML string and piped into the iframe, same as codes[].html.
+  // ============================================
+  const SECTIONS = {
+    home:          { label: 'Home', icon: 'fa-house', auth: false, endpoints: [], build: buildHome },
+    login:         { label: 'Sign in', icon: 'fa-right-to-bracket', auth: false, endpoints: [], build: buildAuth, hidden: true },
+    help:          { label: 'Help', icon: 'fa-circle-question', auth: true, endpoints: ['faqs'], build: buildHelp },
+    tickets:       { label: 'Tickets', icon: 'fa-ticket', auth: true, roles: ['Staff', 'Admin'], endpoints: ['tickets'], build: buildTickets },
+    bookings:      { label: 'Bookings', icon: 'fa-calendar-check', auth: true, roles: ['Staff', 'Admin'], endpoints: ['bookings', 'items'], build: buildBookings },
+    equipment:     { label: 'Equipment & Rooms', icon: 'fa-boxes-stacked', auth: true, roles: ['Staff', 'Admin'], endpoints: ['items'], build: buildEquipment },
+    announcements: { label: 'Announcements', icon: 'fa-bullhorn', auth: true, roles: ['Staff', 'Admin'], endpoints: ['announcements'], build: buildAnnouncements },
+    admin:         { label: 'Admin', icon: 'fa-user-shield', auth: true, roles: ['Admin'], endpoints: ['users', 'stats'], build: buildAdmin }
+  };
+  const ENDPOINT_PATH = {
+    faqs: '/faqs', tickets: '/tickets', bookings: '/bookings', items: '/items',
+    announcements: '/announcements', notifications: '/notifications', users: '/admin/users', stats: '/admin/stats'
+  };
+
+  function visibleTabs() {
+    return Object.entries(SECTIONS).filter(([id, s]) => {
+      if (s.hidden) return false;
+      if (id === 'help') return true;
+      if (id === 'home') return true;
+      if (!state.user) return false;
+      if (s.roles && !s.roles.includes(state.user.role)) return false;
+      return true;
+    });
+  }
+
+  // ============================================
+  // LOAD — fetch only what the active tab needs, then hand off to its builder
+  // ============================================
+  async function loadTab(id, force = false) {
+    const section = SECTIONS[id];
+    if (!section) return;
+    if (section.auth && !state.user) id = 'login';
+    const active = SECTIONS[id];
+
+    useState({ activeTab: id, pageInfo: 'Loading…', isMenuOpen: false, error: '' });
+
+    try {
+      if (active.endpoints.length) {
+        const results = await Promise.all(active.endpoints.map(k =>
+          force || !state.data[k] ? api(ENDPOINT_PATH[k]) : Promise.resolve(state.data[k])
+        ));
+        active.endpoints.forEach((k, i) => { state.data[k] = results[i]; });
+      }
+      applyFrame('mainFrame', active.build());
+      useState('pageInfo', 'Ready');
+    } catch (err) {
+      applyFrame('mainFrame', `<div style="padding:2rem;font-family:system-ui;color:#ef4444">${err.message}</div>`);
+      useState('pageInfo', 'Error');
     }
-  } catch (e) { setState({ error: e.message }); }
-}
+  }
 
-// ---------- Views ----------
+  function refreshActive() { if (state.activeTab) loadTab(state.activeTab, true); }
 
-function homeView() {
-  return `
-  <nav class="border-b border-ink/10 px-5 py-4 flex justify-between items-center bg-parchment sticky top-0 z-10">
-    <div class="font-serif text-lg font-semibold">Parish ICT Desk</div>
-    <button onclick="setState({view:'auth', tab:'login'})" class="text-sm font-medium bg-ink text-parchment px-4 py-2 rounded-full">Sign in</button>
-  </nav>
-  <main class="max-w-2xl mx-auto px-5 pt-14 pb-20">
-    <p class="text-xs uppercase tracking-widest text-brass font-semibold mb-3">ICT Service Management</p>
-    <h1 class="font-serif text-4xl leading-tight mb-4">One desk for every request, booking, and ticket.</h1>
-    <p class="text-ink/70 mb-8 leading-relaxed">Submit ICT support requests, reserve rooms and multimedia equipment, and track everything from Pending to Closed — replacing the WhatsApp thread and the shared spreadsheet.</p>
-    <div class="flex gap-3 mb-14">
-      <button onclick="setState({view:'auth', tab:'register'})" class="bg-rust text-white px-5 py-3 rounded-full font-medium text-sm">Create account</button>
-      <button onclick="setState({view:'auth', tab:'login'})" class="border border-ink/20 px-5 py-3 rounded-full font-medium text-sm">Sign in</button>
-    </div>
-    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-16">
-      ${['Request ICT support','Book rooms & gear','Track ticket status'].map((t,i) => `
-        <div class="border border-ink/10 rounded-2xl p-5 bg-white/50">
-          <div class="text-brass font-serif text-2xl mb-2">0${i+1}</div>
-          <div class="font-medium text-sm">${t}</div>
+  // ============================================
+  // FRAME CONTENT — srcdoc only; each section is self-contained HTML with
+  // inline styles, since Tailwind classes don't cross the iframe boundary.
+  // ============================================
+  function esc(s) { const d = document.createElement('div'); d.textContent = s ?? ''; return d.innerHTML; }
+  function fmtDate(d) { const dt = new Date(d); return dt.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' ' + dt.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }); }
+  const STATUS_COLOR = {
+    Pending: '#b45309', Maintenance: '#b45309', Assigned: '#1d4ed8', 'In Progress': '#1d4ed8',
+    Resolved: '#15803d', Approved: '#15803d', Available: '#15803d',
+    Closed: '#64748b', Cancelled: '#64748b', Retired: '#64748b', Rejected: '#b91c1c'
+  };
+  function pill(status) {
+    const c = STATUS_COLOR[status] || '#64748b';
+    return `<span style="font-size:11px;font-weight:600;letter-spacing:.02em;padding:2px 10px;border-radius:999px;background:${c}1a;color:${c}">${status}</span>`;
+  }
+  function frameShell(inner) {
+    return `<div style="font-family:system-ui,sans-serif;padding:24px;color:#1e293b;max-width:760px;margin:0 auto">${inner}</div>`;
+  }
+
+  function buildHome() {
+    const faqs = state.data.faqs || [];
+    return frameShell(`
+      <p style="font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:#b45309;font-weight:700;margin-bottom:8px">ICT Service Management</p>
+      <h1 style="font-size:30px;margin:0 0 12px">One desk for every request, booking, and ticket.</h1>
+      <p style="color:#64748b;line-height:1.6;margin-bottom:24px">Submit ICT support requests, reserve rooms and equipment, and track status end to end.</p>
+      ${!state.user ? `<button onclick="parent.loadTab('login')" style="background:#1e293b;color:white;border:none;padding:10px 20px;border-radius:999px;font-weight:600;cursor:pointer">Sign in</button>` : ''}
+    `);
+  }
+
+  function buildAuth() {
+    if (state.error) {
+      // rendered after form submit failures; kept out of the shell's cache path
+    }
+    return frameShell(`
+      <div style="max-width:340px;margin:40px auto">
+        <h2 style="margin:0 0 4px">Welcome back</h2>
+        <p style="color:#64748b;font-size:14px;margin:0 0 20px">Sign in to your account</p>
+        ${state.error ? `<div style="background:#fef2f2;color:#b91c1c;font-size:13px;padding:8px 12px;border-radius:8px;margin-bottom:12px">${esc(state.error)}</div>` : ''}
+        <form onsubmit="parent.handleLogin(event)">
+          <input required name="email" type="email" placeholder="Email" style="width:100%;box-sizing:border-box;border:1px solid #e2e8f0;border-radius:8px;padding:10px 12px;font-size:14px;margin-bottom:8px">
+          <input required name="password" type="password" placeholder="Password" style="width:100%;box-sizing:border-box;border:1px solid #e2e8f0;border-radius:8px;padding:10px 12px;font-size:14px;margin-bottom:12px">
+          <button style="width:100%;background:#1e293b;color:white;border:none;padding:10px;border-radius:8px;font-weight:600;cursor:pointer">Sign in</button>
+        </form>
+      </div>
+    `);
+  }
+
+  function buildHelp() {
+    const isAdmin = state.user?.role === 'Admin';
+    const faqs = state.data.faqs || [];
+    return frameShell(`
+      ${isAdmin ? `
+      <div style="border:1px solid #e2e8f0;border-radius:12px;padding:16px;margin-bottom:20px">
+        <h3 style="margin:0 0 10px">Add FAQ</h3>
+        <form onsubmit="parent.handleForm(event,'faqs','help')">
+          <input required name="question" placeholder="Question" style="width:100%;box-sizing:border-box;border:1px solid #e2e8f0;border-radius:8px;padding:8px 10px;font-size:13px;margin-bottom:6px">
+          <textarea required name="answer" placeholder="Answer" rows="2" style="width:100%;box-sizing:border-box;border:1px solid #e2e8f0;border-radius:8px;padding:8px 10px;font-size:13px;margin-bottom:6px"></textarea>
+          <button style="background:#1e293b;color:white;border:none;padding:8px 16px;border-radius:8px;font-size:13px;cursor:pointer">Publish</button>
+        </form>
+      </div>` : ''}
+      <h3 style="margin:0 0 12px">Frequently asked</h3>
+      ${faqs.length ? faqs.map(f => `
+        <div style="border-bottom:1px solid #f1f5f9;padding:10px 0">
+          <div style="font-weight:600;font-size:14px">${esc(f.question)}</div>
+          <div style="color:#64748b;font-size:14px;margin-top:4px">${esc(f.answer)}</div>
+          ${isAdmin ? `<button onclick="parent.deleteRecord('faqs',${f.id},'help')" style="border:none;background:none;color:#b91c1c;font-size:12px;cursor:pointer;margin-top:4px;text-decoration:underline">Delete</button>` : ''}
+        </div>`).join('') : `<p style="color:#94a3b8;font-size:14px">No FAQs yet.</p>`}
+    `);
+  }
+
+  function buildTickets() {
+    const tickets = state.data.tickets || [];
+    const nextMap = { Pending: 'Assigned', Assigned: 'In Progress', 'In Progress': 'Resolved', Resolved: 'Closed' };
+    return frameShell(`
+      <div style="border:1px solid #e2e8f0;border-radius:12px;padding:16px;margin-bottom:20px">
+        <h3 style="margin:0 0 10px">New support request</h3>
+        <form onsubmit="parent.handleForm(event,'tickets','tickets')">
+          <input required name="category" placeholder="Category" style="width:100%;box-sizing:border-box;border:1px solid #e2e8f0;border-radius:8px;padding:8px 10px;font-size:13px;margin-bottom:6px">
+          <textarea required name="description" placeholder="Describe the issue" rows="2" style="width:100%;box-sizing:border-box;border:1px solid #e2e8f0;border-radius:8px;padding:8px 10px;font-size:13px;margin-bottom:6px"></textarea>
+          <select name="priority" style="width:100%;box-sizing:border-box;border:1px solid #e2e8f0;border-radius:8px;padding:8px 10px;font-size:13px;margin-bottom:6px">
+            <option value="Normal">Normal</option><option value="Low">Low</option><option value="High">High</option><option value="Urgent">Urgent</option>
+          </select>
+          <button style="background:#1e293b;color:white;border:none;padding:8px 16px;border-radius:8px;font-size:13px;cursor:pointer">Submit</button>
+        </form>
+      </div>
+      ${tickets.map(t => `
+        <div style="border:1px solid #e2e8f0;border-radius:12px;padding:14px;margin-bottom:10px">
+          <div style="display:flex;justify-content:space-between;align-items:start">
+            <div style="font-weight:600;font-size:14px">${esc(t.category)}</div>${pill(t.status)}
+          </div>
+          <p style="color:#64748b;font-size:13px;margin:6px 0">${esc(t.description)}</p>
+          <div style="font-size:12px;color:#94a3b8;margin-bottom:8px">#${t.id} · ${t.priority} priority${t.assignee_name ? ' · assigned to ' + esc(t.assignee_name) : ''}</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            ${t.status === 'Pending' ? `<button onclick="parent.ticketAction(${t.id},'assign')" style="border:1px solid #cbd5e1;background:none;border-radius:999px;padding:4px 12px;font-size:12px;cursor:pointer">Assign to me</button>` : ''}
+            ${nextMap[t.status] ? `<button onclick="parent.ticketAction(${t.id},'status','${nextMap[t.status]}')" style="border:none;background:#15803d;color:white;border-radius:999px;padding:4px 12px;font-size:12px;cursor:pointer">Move to ${nextMap[t.status]}</button>` : ''}
+          </div>
+        </div>`).join('') || `<p style="color:#94a3b8;font-size:14px">No requests yet.</p>`}
+    `);
+  }
+
+  function buildBookings() {
+    const bookings = state.data.bookings || [];
+    const items = (state.data.items || []).filter(i => i.status === 'Available');
+    return frameShell(`
+      <div style="border:1px solid #e2e8f0;border-radius:12px;padding:16px;margin-bottom:20px">
+        <h3 style="margin:0 0 10px">Book equipment or a room</h3>
+        <form onsubmit="parent.handleBooking(event)">
+          <select required name="item_id" style="width:100%;box-sizing:border-box;border:1px solid #e2e8f0;border-radius:8px;padding:8px 10px;font-size:13px;margin-bottom:6px">
+            <option value="">Select item…</option>
+            ${items.map(i => `<option value="${i.id}">${esc(i.name)} (${i.type})</option>`).join('')}
+          </select>
+          <div style="display:flex;gap:8px;margin-bottom:6px">
+            <input required name="start_time" type="datetime-local" style="flex:1;box-sizing:border-box;border:1px solid #e2e8f0;border-radius:8px;padding:8px 10px;font-size:13px">
+            <input required name="end_time" type="datetime-local" style="flex:1;box-sizing:border-box;border:1px solid #e2e8f0;border-radius:8px;padding:8px 10px;font-size:13px">
+          </div>
+          <button style="background:#1e293b;color:white;border:none;padding:8px 16px;border-radius:8px;font-size:13px;cursor:pointer">Request</button>
+        </form>
+      </div>
+      ${bookings.map(b => `
+        <div style="border:1px solid #e2e8f0;border-radius:12px;padding:14px;margin-bottom:10px">
+          <div style="display:flex;justify-content:space-between;align-items:start">
+            <div style="font-weight:600;font-size:14px">${esc(b.item_name || 'Item #' + b.item_id)}</div>${pill(b.status)}
+          </div>
+          <div style="font-size:12px;color:#94a3b8;margin:6px 0">${fmtDate(b.start_time)} → ${fmtDate(b.end_time)}</div>
+          <div style="display:flex;gap:8px">
+            ${b.status === 'Pending' ? `
+              <button onclick="parent.bookingAction(${b.id},'approve')" style="border:none;background:#15803d;color:white;border-radius:999px;padding:4px 12px;font-size:12px;cursor:pointer">Approve</button>
+              <button onclick="parent.bookingAction(${b.id},'reject')" style="border:1px solid #b91c1c;color:#b91c1c;background:none;border-radius:999px;padding:4px 12px;font-size:12px;cursor:pointer">Reject</button>` : ''}
+            ${['Pending', 'Approved'].includes(b.status) ? `<button onclick="parent.bookingAction(${b.id},'cancel')" style="border:none;background:none;color:#94a3b8;font-size:12px;cursor:pointer;text-decoration:underline">Cancel</button>` : ''}
+          </div>
+        </div>`).join('') || `<p style="color:#94a3b8;font-size:14px">No bookings yet.</p>`}
+    `);
+  }
+
+  function buildEquipment() {
+    const isAdmin = state.user?.role === 'Admin';
+    const items = state.data.items || [];
+    return frameShell(`
+      ${isAdmin ? `
+      <div style="border:1px solid #e2e8f0;border-radius:12px;padding:16px;margin-bottom:20px">
+        <h3 style="margin:0 0 10px">Add item</h3>
+        <form onsubmit="parent.handleForm(event,'items','equipment')">
+          <input required name="name" placeholder="Name" style="width:100%;box-sizing:border-box;border:1px solid #e2e8f0;border-radius:8px;padding:8px 10px;font-size:13px;margin-bottom:6px">
+          <select required name="type" style="width:100%;box-sizing:border-box;border:1px solid #e2e8f0;border-radius:8px;padding:8px 10px;font-size:13px;margin-bottom:6px">
+            <option value="Equipment">Equipment</option><option value="Room">Room</option>
+          </select>
+          <button style="background:#1e293b;color:white;border:none;padding:8px 16px;border-radius:8px;font-size:13px;cursor:pointer">Add</button>
+        </form>
+      </div>` : ''}
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        ${items.map(i => `
+          <div style="border:1px solid #e2e8f0;border-radius:12px;padding:12px">
+            <div style="display:flex;justify-content:space-between"><div style="font-weight:600;font-size:14px">${esc(i.name)}</div><span style="font-size:11px;color:#94a3b8">${i.type}</span></div>
+            <div style="margin-top:8px">${isAdmin ? `
+              <select onchange="parent.itemStatus(${i.id},this.value)" style="font-size:12px;border:1px solid #e2e8f0;border-radius:999px;padding:2px 8px">
+                ${['Available', 'Maintenance', 'Retired'].map(s => `<option ${s === i.status ? 'selected' : ''}>${s}</option>`).join('')}
+              </select>` : pill(i.status)}</div>
+          </div>`).join('') || `<p style="color:#94a3b8;font-size:14px">No items yet.</p>`}
+      </div>
+    `);
+  }
+
+  function buildAnnouncements() {
+    const isAdmin = state.user?.role === 'Admin';
+    const list = state.data.announcements || [];
+    return frameShell(`
+      ${isAdmin ? `
+      <div style="border:1px solid #e2e8f0;border-radius:12px;padding:16px;margin-bottom:20px">
+        <h3 style="margin:0 0 10px">Publish announcement</h3>
+        <form onsubmit="parent.handleForm(event,'announcements','announcements')">
+          <input required name="title" placeholder="Title" style="width:100%;box-sizing:border-box;border:1px solid #e2e8f0;border-radius:8px;padding:8px 10px;font-size:13px;margin-bottom:6px">
+          <textarea required name="body" placeholder="Message" rows="2" style="width:100%;box-sizing:border-box;border:1px solid #e2e8f0;border-radius:8px;padding:8px 10px;font-size:13px;margin-bottom:6px"></textarea>
+          <button style="background:#1e293b;color:white;border:none;padding:8px 16px;border-radius:8px;font-size:13px;cursor:pointer">Publish</button>
+        </form>
+      </div>` : ''}
+      ${list.map(a => `
+        <div style="border:1px solid #e2e8f0;border-radius:12px;padding:14px;margin-bottom:10px">
+          <div style="font-weight:600;font-size:14px">${esc(a.title)}</div>
+          <p style="color:#64748b;font-size:13px;margin:4px 0">${esc(a.body)}</p>
+          <div style="font-size:11px;color:#94a3b8">${fmtDate(a.created_at)}</div>
+        </div>`).join('') || `<p style="color:#94a3b8;font-size:14px">No announcements yet.</p>`}
+    `);
+  }
+
+  function buildAdmin() {
+    const s = state.data.stats || {};
+    const users = state.data.users || [];
+    return frameShell(`
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:20px">
+        ${[['total_users', 'Users'], ['total_tickets', 'Tickets'], ['total_bookings', 'Bookings']].map(([k, label]) => `
+        <div style="border:1px solid #e2e8f0;border-radius:12px;padding:14px;text-align:center">
+          <div style="font-size:22px;font-weight:700">${s[k] ?? '—'}</div><div style="font-size:11px;color:#94a3b8">${label}</div>
         </div>`).join('')}
-    </div>
-    <h2 class="font-serif text-xl mb-4">Frequently asked</h2>
-    <div id="public-faqs" class="space-y-3 mb-16">Loading…</div>
-  </main>`;
-}
-
-async function loadPublicFaqs() {
-  try {
-    const faqs = await api('/faqs');
-    const el = document.getElementById('public-faqs');
-    if (!el) return;
-    el.innerHTML = faqs.length ? faqs.map(f => `
-      <div class="border-b border-ink/10 pb-3">
-        <div class="font-medium text-sm">${escapeHtml(f.question)}</div>
-        <div class="text-ink/60 text-sm mt-1">${escapeHtml(f.answer)}</div>
-      </div>`).join('') : `<p class="text-ink/50 text-sm">No FAQs published yet.</p>`;
-  } catch (e) {}
-}
-
-function authView() {
-  const isLogin = state.tab === 'login';
-  return `
-  <div class="min-h-screen flex items-center justify-center px-5">
-    <div class="w-full max-w-sm">
-      <div class="text-center mb-8">
-        <div class="font-serif text-2xl mb-1">Parish ICT Desk</div>
-        <p class="text-ink/50 text-sm">${isLogin ? 'Welcome back' : 'Create your account'}</p>
       </div>
-      <div class="flex border-b border-ink/10 mb-6 text-sm">
-        <button onclick="setState({tab:'login'})" class="tab-btn ${isLogin?'active':''} border-b-2 pb-2 px-4 font-medium">Sign in</button>
-        <button onclick="setState({tab:'register'})" class="tab-btn ${!isLogin?'active':''} border-b-2 pb-2 px-4 font-medium">Register</button>
-      </div>
-      ${state.error ? `<div class="bg-rust/10 text-rust text-sm rounded-lg px-3 py-2 mb-4">${escapeHtml(state.error)}</div>` : ''}
-      <form id="auth-form" class="space-y-3">
-        ${!isLogin ? `<input required name="name" placeholder="Full name" class="w-full border border-ink/15 rounded-lg px-4 py-3 text-sm bg-white">` : ''}
-        <input required name="email" type="email" placeholder="Email" class="w-full border border-ink/15 rounded-lg px-4 py-3 text-sm bg-white">
-        <input required name="password" type="password" placeholder="Password" class="w-full border border-ink/15 rounded-lg px-4 py-3 text-sm bg-white">
-        <button type="submit" class="w-full bg-ink text-parchment rounded-lg py-3 text-sm font-medium mt-2">${isLogin ? 'Sign in' : 'Create account'}</button>
-      </form>
-      <button onclick="setState({view:'home', error:null})" class="text-ink/40 text-xs mt-6 block mx-auto">&larr; Back to home</button>
-    </div>
-  </div>`;
-}
+      <h3 style="margin:0 0 10px">Users</h3>
+      ${users.map(u => `
+        <div style="display:flex;justify-content:space-between;align-items:center;border:1px solid #e2e8f0;border-radius:10px;padding:10px 12px;margin-bottom:6px">
+          <div><div style="font-weight:600;font-size:13px">${esc(u.name)}</div><div style="font-size:11px;color:#94a3b8">${esc(u.email)}</div></div>
+          <select onchange="parent.userRole(${u.id},this.value)" style="font-size:12px;border:1px solid #e2e8f0;border-radius:999px;padding:2px 8px">
+            ${['User', 'Staff', 'Admin'].map(r => `<option ${r === u.role ? 'selected' : ''}>${r}</option>`).join('')}
+          </select>
+        </div>`).join('')}
+    `);
+  }
 
-async function handleAuthSubmit(e) {
-  e.preventDefault();
-  const f = new FormData(e.target);
-  const isLogin = state.tab === 'login';
-  try {
-    if (isLogin) {
+  // ============================================
+  // NOTIFICATIONS (bell → full sheet, not sub sheet)
+  // ============================================
+  async function openNotifications() {
+    try {
+      state.data.notifications = await api('/notifications');
+      openFullSheet('Notifications', buildNotifications());
+      useState('data', state.data);
+    } catch (err) { useState('error', err.message); }
+  }
+  function buildNotifications() {
+    const list = state.data.notifications || [];
+    return frameShell(list.map(n => `
+      <div style="display:flex;justify-content:space-between;align-items:center;border:1px solid #e2e8f0;border-radius:10px;padding:10px 12px;margin-bottom:8px;${n.is_read ? 'opacity:.5' : ''}">
+        <span style="font-size:13px">${esc(n.message)}</span>
+        ${!n.is_read ? `<button onclick="parent.readNotification(${n.id})" style="border:none;background:none;color:#b45309;font-size:12px;cursor:pointer;text-decoration:underline">Mark read</button>` : ''}
+      </div>`).join('') || `<p style="color:#94a3b8;font-size:14px">No notifications yet.</p>`);
+  }
+  async function readNotification(id) {
+    try { await api(`/notifications/${id}/read`, { method: 'PATCH' }); await openNotifications(); } catch (_) {}
+  }
+
+  // ============================================
+  // RENDER — the only place that mutates the outer DOM
+  // ============================================
+  function applyFrame(frameId, html) {
+    const frame = document.getElementById(frameId);
+    frame.removeAttribute('src');
+    frame.srcdoc = html;
+  }
+
+  function render() {
+    const active = SECTIONS[state.activeTab];
+    document.getElementById('pageTitle').textContent = active ? active.label : 'Select a section';
+    document.getElementById('pageInfo').textContent = state.pageInfo;
+    document.getElementById('menu').classList.toggle('open', state.isMenuOpen);
+    document.getElementById('bellDot').classList.toggle('hidden', !(state.data.notifications || []).some(n => !n.is_read));
+
+    const full = document.getElementById('fullSheet');
+    full.classList.toggle('hidden', !state.fullSheet.active);
+    document.getElementById('fullSheetTitle').textContent = state.fullSheet.title || '';
+    if (state.fullSheet.active) applyFrame('fullFrame', state.fullSheet.content);
+
+    renderMenu();
+  }
+
+  function renderMenu() {
+    const list = document.getElementById('menuList');
+    list.innerHTML = visibleTabs().map(([id, s]) => `
+      <button data-tab="${id}"
+        style="width:100%;text-align:left;padding:10px 12px;border-radius:8px;font-size:14px;border:none;cursor:pointer;display:flex;align-items:center;gap:10px;
+               background:${state.activeTab === id ? '#2563eb' : 'transparent'};color:${state.activeTab === id ? 'white' : '#e2e8f0'}">
+        <i class="fa ${s.icon}"></i>${s.label}
+      </button>`).join('');
+    list.querySelectorAll('[data-tab]').forEach(btn => { btn.onclick = () => loadTab(btn.dataset.tab); });
+
+    document.getElementById('userBox').innerHTML = state.user
+      ? `${esc(state.user.name)} · ${state.user.role}<br><button onclick="parent.logout()" style="color:#f87171;background:none;border:none;font-size:11px;cursor:pointer;margin-top:4px;text-decoration:underline">Sign out</button>`
+      : `Not signed in`;
+  }
+
+  function openFullSheet(title, content) { useState('fullSheet', { active: true, title, content }); }
+  function closeFullSheet() { useState('fullSheet', { active: false, title: '', content: null }); }
+
+  // ============================================
+  // ACTIONS — only these call useState / api; forms live inside iframes
+  // and reach back out through window.parent.
+  // ============================================
+  async function handleLogin(e) {
+    e.preventDefault();
+    const f = new FormData(e.target);
+    try {
       const data = await api('/auth/login', { method: 'POST', body: JSON.stringify({ email: f.get('email'), password: f.get('password') }) });
-      login(data.token, data.user);
-    } else {
-      await api('/auth/register', { method: 'POST', body: JSON.stringify({ name: f.get('name'), email: f.get('email'), password: f.get('password') }) });
-      const data = await api('/auth/login', { method: 'POST', body: JSON.stringify({ email: f.get('email'), password: f.get('password') }) });
-      login(data.token, data.user);
-    }
-  } catch (err) { setState({ error: err.message }); }
-}
+      loginSuccess(data.token, data.user);
+      loadTab('home');
+    } catch (err) { useState('error', err.message); applyFrame('mainFrame', buildAuth()); }
+  }
 
-function dashboardView() {
-  const u = state.user;
-  const isStaffOrAdmin = u.role === 'Staff' || u.role === 'Admin';
-  const tabs = [['tickets','Tickets'], ['bookings','Bookings'], ['equipment','Equipment & Rooms'], ['faqs','FAQs'], ['news','Announcements'], ['alerts','Notifications']];
-  if (u.role === 'Admin') tabs.push(['admin','Admin']);
+  async function handleForm(e, endpointKey, refreshTab) {
+    e.preventDefault();
+    const body = Object.fromEntries(new FormData(e.target));
+    try { await api(ENDPOINT_PATH[endpointKey], { method: 'POST', body: JSON.stringify(body) }); await loadTab(refreshTab, true); }
+    catch (err) { useState('error', err.message); }
+  }
+  async function handleBooking(e) {
+    e.preventDefault();
+    const body = Object.fromEntries(new FormData(e.target));
+    body.start_time = new Date(body.start_time).toISOString();
+    body.end_time = new Date(body.end_time).toISOString();
+    try { await api('/bookings', { method: 'POST', body: JSON.stringify(body) }); await loadTab('bookings', true); }
+    catch (err) { useState('error', err.message); }
+  }
+  async function deleteRecord(endpointKey, id, refreshTab) {
+    try { await api(`${ENDPOINT_PATH[endpointKey]}/${id}`, { method: 'DELETE' }); await loadTab(refreshTab, true); }
+    catch (err) { useState('error', err.message); }
+  }
+  async function ticketAction(id, kind, status) {
+    try {
+      if (kind === 'assign') await api(`/tickets/${id}/assign`, { method: 'PATCH', body: JSON.stringify({ assigned_to: state.user.id }) });
+      else await api(`/tickets/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) });
+      await loadTab('tickets', true);
+    } catch (err) { useState('error', err.message); }
+  }
+  async function bookingAction(id, action) {
+    try { await api(`/bookings/${id}/${action}`, { method: 'PATCH' }); await loadTab('bookings', true); }
+    catch (err) { useState('error', err.message); }
+  }
+  async function itemStatus(id, status) {
+    try { await api(`/items/${id}`, { method: 'PATCH', body: JSON.stringify({ status }) }); await loadTab('equipment', true); }
+    catch (err) { useState('error', err.message); }
+  }
+  async function userRole(id, role) {
+    try { await api(`/admin/users/${id}/role`, { method: 'PATCH', body: JSON.stringify({ role }) }); await loadTab('admin', true); }
+    catch (err) { useState('error', err.message); }
+  }
 
-  return `
-  <nav class="border-b border-ink/10 px-5 py-4 flex justify-between items-center bg-parchment sticky top-0 z-10">
-    <div class="font-serif text-lg font-semibold">Parish ICT Desk</div>
-    <div class="flex items-center gap-3 text-sm">
-      <span class="text-ink/50 hidden sm:inline">${escapeHtml(u.name)} · ${u.role}</span>
-      <button onclick="logout()" class="border border-ink/20 px-3 py-1.5 rounded-full text-xs font-medium">Sign out</button>
-    </div>
-  </nav>
-  <div class="max-w-3xl mx-auto px-5 pt-6">
-    ${state.error ? `<div class="bg-rust/10 text-rust text-sm rounded-lg px-3 py-2 mb-4">${escapeHtml(state.error)}</div>` : ''}
-    <div class="flex gap-1 overflow-x-auto border-b border-ink/10 mb-6 text-sm no-scrollbar">
-      ${tabs.map(([id,label]) => `<button onclick="setState({tab:'${id}', error:null})" class="tab-btn ${state.tab===id?'active':''} border-b-2 pb-3 px-3 font-medium whitespace-nowrap">${label}</button>`).join('')}
-    </div>
-    <div id="tab-content" class="pb-24">${renderTab()}</div>
-  </div>`;
-}
+  // ============================================
+  // EVENTS + INIT
+  // ============================================
+  function bindEvents() {
+    document.getElementById('openMenuBtn').onclick = () => useState('isMenuOpen', true);
+    document.getElementById('closeMenuBtn').onclick = () => useState('isMenuOpen', false);
+    document.getElementById('refreshBtn')?.addEventListener('click', refreshActive);
+    document.getElementById('closeFullSheetBtn').onclick = closeFullSheet;
+    document.getElementById('bellBtn').onclick = openNotifications;
 
-function renderTab() {
-  const u = state.user;
-  const isStaffOrAdmin = u.role === 'Staff' || u.role === 'Admin';
-  if (state.tab === 'tickets') return ticketsTab(isStaffOrAdmin);
-  if (state.tab === 'bookings') return bookingsTab(isStaffOrAdmin);
-  if (state.tab === 'equipment') return equipmentTab(u.role === 'Admin');
-  if (state.tab === 'faqs') return faqsTab(u.role === 'Admin');
-  if (state.tab === 'news') return newsTab(u.role === 'Admin');
-  if (state.tab === 'alerts') return alertsTab();
-  if (state.tab === 'admin' && u.role === 'Admin') return adminTab();
-  return '';
-}
+    document.addEventListener('click', e => {
+      const menu = document.getElementById('menu');
+      const btn = document.getElementById('openMenuBtn');
+      if (state.isMenuOpen && !menu.contains(e.target) && !btn.contains(e.target)) useState('isMenuOpen', false);
+    });
+  }
 
-function pill(status) { return `<span class="status-pill st-${status.replace(' ','')}">${status}</span>`; }
+  function init() {
+    bindEvents();
+    loadTab(state.user ? 'home' : 'home');
+  }
 
-function ticketsTab(isStaffOrAdmin) {
-  return `
-  <div class="bg-white border border-ink/10 rounded-2xl p-5 mb-6">
-    <h3 class="font-serif text-lg mb-3">New support request</h3>
-    <form id="ticket-form" class="space-y-3">
-      <input required name="category" placeholder="Category (e.g. Projector, Network, Audio)" class="w-full border border-ink/15 rounded-lg px-4 py-2.5 text-sm">
-      <textarea required name="description" placeholder="Describe the issue" rows="3" class="w-full border border-ink/15 rounded-lg px-4 py-2.5 text-sm"></textarea>
-      <select name="priority" class="w-full border border-ink/15 rounded-lg px-4 py-2.5 text-sm">
-        <option value="Normal">Normal priority</option><option value="Low">Low priority</option>
-        <option value="High">High priority</option><option value="Urgent">Urgent</option>
-      </select>
-      <button class="bg-ink text-parchment rounded-lg px-5 py-2.5 text-sm font-medium">Submit request</button>
-    </form>
-  </div>
-  <h3 class="font-serif text-lg mb-3">${isStaffOrAdmin ? 'All requests' : 'My requests'}</h3>
-  <div class="space-y-3">
-    ${state.tickets.length ? state.tickets.map(t => `
-      <div class="border border-ink/10 rounded-xl p-4 bg-white/60">
-        <div class="flex justify-between items-start mb-1">
-          <div class="font-medium text-sm">${escapeHtml(t.category)}</div>
-          ${pill(t.status)}
-        </div>
-        <p class="text-ink/60 text-sm mb-2">${escapeHtml(t.description)}</p>
-        <div class="text-xs text-ink/40 mb-2">#${t.id} · ${t.priority} priority ${t.requester_name ? '· by ' + escapeHtml(t.requester_name) : ''} ${t.assignee_name ? '· assigned to ' + escapeHtml(t.assignee_name) : ''}</div>
-        ${isStaffOrAdmin ? ticketActions(t) : ''}
-      </div>`).join('') : `<p class="text-ink/40 text-sm">No requests yet.</p>`}
-  </div>`;
-}
+  document.addEventListener('DOMContentLoaded', init);
 
-function ticketActions(t) {
-  const nextMap = { Pending: 'Assigned', Assigned: 'In Progress', 'In Progress': 'Resolved', Resolved: 'Closed' };
-  const next = nextMap[t.status];
-  return `<div class="flex gap-2 flex-wrap">
-    ${t.status === 'Pending' ? `<button onclick="assignTicket(${t.id})" class="text-xs border border-ink/20 rounded-full px-3 py-1">Assign to me</button>` : ''}
-    ${next ? `<button onclick="advanceTicket(${t.id}, '${next}')" class="text-xs bg-moss text-white rounded-full px-3 py-1">Move to ${next}</button>` : ''}
-  </div>`;
-}
-
-async function assignTicket(id) {
-  try { await api(`/tickets/${id}/assign`, { method: 'PATCH', body: JSON.stringify({ assigned_to: state.user.id }) }); await refreshTab('tickets'); }
-  catch (e) { setState({ error: e.message }); }
-}
-async function advanceTicket(id, status) {
-  try { await api(`/tickets/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }); await refreshTab('tickets'); }
-  catch (e) { setState({ error: e.message }); }
-}
-
-function bookingsTab(isStaffOrAdmin) {
-  return `
-  <div class="bg-white border border-ink/10 rounded-2xl p-5 mb-6">
-    <h3 class="font-serif text-lg mb-3">Book equipment or a room</h3>
-    <form id="booking-form" class="space-y-3">
-      <select required name="item_id" class="w-full border border-ink/15 rounded-lg px-4 py-2.5 text-sm">
-        <option value="">Select item…</option>
-        ${state.items.filter(i => i.status === 'Available').map(i => `<option value="${i.id}">${escapeHtml(i.name)} (${i.type})</option>`).join('')}
-      </select>
-      <div class="grid grid-cols-2 gap-3">
-        <input required name="start_time" type="datetime-local" class="w-full border border-ink/15 rounded-lg px-3 py-2.5 text-sm">
-        <input required name="end_time" type="datetime-local" class="w-full border border-ink/15 rounded-lg px-3 py-2.5 text-sm">
-      </div>
-      <input name="purpose" placeholder="Purpose (optional)" class="w-full border border-ink/15 rounded-lg px-4 py-2.5 text-sm">
-      <button class="bg-ink text-parchment rounded-lg px-5 py-2.5 text-sm font-medium">Request booking</button>
-    </form>
-  </div>
-  <h3 class="font-serif text-lg mb-3">${isStaffOrAdmin ? 'All bookings' : 'My bookings'}</h3>
-  <div class="space-y-3">
-    ${state.bookings.length ? state.bookings.map(b => `
-      <div class="border border-ink/10 rounded-xl p-4 bg-white/60">
-        <div class="flex justify-between items-start mb-1">
-          <div class="font-medium text-sm">${escapeHtml(b.item_name || 'Item #' + b.item_id)}</div>
-          ${pill(b.status)}
-        </div>
-        <div class="text-xs text-ink/50 mb-2">${fmtDate(b.start_time)} → ${fmtDate(b.end_time)} ${b.user_name ? '· by ' + escapeHtml(b.user_name) : ''}</div>
-        <div class="flex gap-2">
-          ${isStaffOrAdmin && b.status === 'Pending' ? `
-            <button onclick="bookingAction(${b.id},'approve')" class="text-xs bg-moss text-white rounded-full px-3 py-1">Approve</button>
-            <button onclick="bookingAction(${b.id},'reject')" class="text-xs border border-rust text-rust rounded-full px-3 py-1">Reject</button>` : ''}
-          ${(b.status === 'Pending' || b.status === 'Approved') ? `<button onclick="bookingAction(${b.id},'cancel')" class="text-xs text-ink/40 underline">Cancel</button>` : ''}
-        </div>
-      </div>`).join('') : `<p class="text-ink/40 text-sm">No bookings yet.</p>`}
-  </div>`;
-}
-
-async function bookingAction(id, action) {
-  try { await api(`/bookings/${id}/${action}`, { method: 'PATCH' }); await refreshTab('bookings'); }
-  catch (e) { setState({ error: e.message }); }
-}
-
-function equipmentTab(isAdmin) {
-  return `
-  ${isAdmin ? `
-  <div class="bg-white border border-ink/10 rounded-2xl p-5 mb-6">
-    <h3 class="font-serif text-lg mb-3">Add equipment or room</h3>
-    <form id="item-form" class="space-y-3">
-      <input required name="name" placeholder="Name" class="w-full border border-ink/15 rounded-lg px-4 py-2.5 text-sm">
-      <select required name="type" class="w-full border border-ink/15 rounded-lg px-4 py-2.5 text-sm">
-        <option value="Equipment">Equipment</option><option value="Room">Room</option>
-      </select>
-      <input name="description" placeholder="Description (optional)" class="w-full border border-ink/15 rounded-lg px-4 py-2.5 text-sm">
-      <button class="bg-ink text-parchment rounded-lg px-5 py-2.5 text-sm font-medium">Add item</button>
-    </form>
-  </div>` : ''}
-  <h3 class="font-serif text-lg mb-3">Equipment & rooms</h3>
-  <div class="grid sm:grid-cols-2 gap-3">
-    ${state.items.length ? state.items.map(i => `
-      <div class="border border-ink/10 rounded-xl p-4 bg-white/60">
-        <div class="flex justify-between items-start mb-1">
-          <div class="font-medium text-sm">${escapeHtml(i.name)}</div>
-          <span class="text-xs text-ink/40">${i.type}</span>
-        </div>
-        <p class="text-ink/50 text-xs mb-2">${escapeHtml(i.description || '')}</p>
-        ${isAdmin ? `
-        <select onchange="updateItemStatus(${i.id}, this.value)" class="text-xs border border-ink/15 rounded-full px-2 py-1">
-          ${['Available','Maintenance','Retired'].map(s => `<option value="${s}" ${s===i.status?'selected':''}>${s}</option>`).join('')}
-        </select>` : `<span class="status-pill ${i.status==='Available'?'st-Approved':'st-Cancelled'}">${i.status}</span>`}
-      </div>`).join('') : `<p class="text-ink/40 text-sm">No items yet.</p>`}
-  </div>`;
-}
-
-async function updateItemStatus(id, status) {
-  try { await api(`/items/${id}`, { method: 'PATCH', body: JSON.stringify({ status }) }); await refreshTab('equipment'); }
-  catch (e) { setState({ error: e.message }); }
-}
-
-function faqsTab(isAdmin) {
-  return `
-  ${isAdmin ? `
-  <div class="bg-white border border-ink/10 rounded-2xl p-5 mb-6">
-    <h3 class="font-serif text-lg mb-3">Add FAQ</h3>
-    <form id="faq-form" class="space-y-3">
-      <input required name="question" placeholder="Question" class="w-full border border-ink/15 rounded-lg px-4 py-2.5 text-sm">
-      <textarea required name="answer" placeholder="Answer" rows="2" class="w-full border border-ink/15 rounded-lg px-4 py-2.5 text-sm"></textarea>
-      <button class="bg-ink text-parchment rounded-lg px-5 py-2.5 text-sm font-medium">Publish FAQ</button>
-    </form>
-  </div>` : ''}
-  <div class="space-y-3">
-    ${state.faqs.length ? state.faqs.map(f => `
-      <div class="border border-ink/10 rounded-xl p-4 bg-white/60">
-        <div class="font-medium text-sm mb-1">${escapeHtml(f.question)}</div>
-        <p class="text-ink/60 text-sm">${escapeHtml(f.answer)}</p>
-        ${isAdmin ? `<button onclick="deleteFaq(${f.id})" class="text-xs text-rust underline mt-2">Delete</button>` : ''}
-      </div>`).join('') : `<p class="text-ink/40 text-sm">No FAQs yet.</p>`}
-  </div>`;
-}
-async function deleteFaq(id) { try { await api(`/faqs/${id}`, { method: 'DELETE' }); await refreshTab('faqs'); } catch (e) { setState({ error: e.message }); } }
-
-function newsTab(isAdmin) {
-  return `
-  ${isAdmin ? `
-  <div class="bg-white border border-ink/10 rounded-2xl p-5 mb-6">
-    <h3 class="font-serif text-lg mb-3">Publish announcement</h3>
-    <form id="announcement-form" class="space-y-3">
-      <input required name="title" placeholder="Title" class="w-full border border-ink/15 rounded-lg px-4 py-2.5 text-sm">
-      <textarea required name="body" placeholder="Message" rows="3" class="w-full border border-ink/15 rounded-lg px-4 py-2.5 text-sm"></textarea>
-      <button class="bg-ink text-parchment rounded-lg px-5 py-2.5 text-sm font-medium">Publish</button>
-    </form>
-  </div>` : ''}
-  <div class="space-y-3">
-    ${state.announcements.length ? state.announcements.map(a => `
-      <div class="border border-ink/10 rounded-xl p-4 bg-white/60">
-        <div class="font-medium text-sm mb-1">${escapeHtml(a.title)}</div>
-        <p class="text-ink/60 text-sm mb-1">${escapeHtml(a.body)}</p>
-        <div class="text-xs text-ink/40">${fmtDate(a.created_at)}</div>
-      </div>`).join('') : `<p class="text-ink/40 text-sm">No announcements yet.</p>`}
-  </div>`;
-}
-
-function alertsTab() {
-  return `<div class="space-y-3">
-    ${state.notifications.length ? state.notifications.map(n => `
-      <div class="border border-ink/10 rounded-xl p-4 ${n.is_read ? 'bg-white/40' : 'bg-white'} flex justify-between items-center">
-        <span class="text-sm ${n.is_read ? 'text-ink/50' : ''}">${escapeHtml(n.message)}</span>
-        ${!n.is_read ? `<button onclick="markRead(${n.id})" class="text-xs text-brass underline whitespace-nowrap ml-3">Mark read</button>` : ''}
-      </div>`).join('') : `<p class="text-ink/40 text-sm">No notifications yet.</p>`}
-  </div>`;
-}
-async function markRead(id) { try { await api(`/notifications/${id}/read`, { method: 'PATCH' }); await refreshTab('alerts'); } catch (e) {} }
-
-function adminTab() {
-  const s = state.stats;
-  return `
-  ${s ? `
-  <div class="grid grid-cols-3 gap-3 mb-6">
-    <div class="border border-ink/10 rounded-xl p-4 bg-white/60 text-center">
-      <div class="font-serif text-2xl">${s.total_users}</div><div class="text-xs text-ink/50">Users</div>
-    </div>
-    <div class="border border-ink/10 rounded-xl p-4 bg-white/60 text-center">
-      <div class="font-serif text-2xl">${s.total_tickets}</div><div class="text-xs text-ink/50">Tickets</div>
-    </div>
-    <div class="border border-ink/10 rounded-xl p-4 bg-white/60 text-center">
-      <div class="font-serif text-2xl">${s.total_bookings}</div><div class="text-xs text-ink/50">Bookings</div>
-    </div>
-  </div>` : ''}
-  <h3 class="font-serif text-lg mb-3">Users</h3>
-  <div class="space-y-2">
-    ${state.users.map(u => `
-      <div class="border border-ink/10 rounded-xl p-3 bg-white/60 flex justify-between items-center">
-        <div>
-          <div class="font-medium text-sm">${escapeHtml(u.name)}</div>
-          <div class="text-xs text-ink/40">${escapeHtml(u.email)}</div>
-        </div>
-        <select onchange="changeRole(${u.id}, this.value)" class="text-xs border border-ink/15 rounded-full px-2 py-1">
-          ${['User','Staff','Admin'].map(r => `<option value="${r}" ${r===u.role?'selected':''}>${r}</option>`).join('')}
-        </select>
-      </div>`).join('')}
-  </div>`;
-}
-async function changeRole(id, role) { try { await api(`/admin/users/${id}/role`, { method: 'PATCH', body: JSON.stringify({ role }) }); await refreshTab('admin'); } catch (e) { setState({ error: e.message }); } }
-
-async function refreshTab(tab) {
-  await loadDashboardData();
-  setState({ tab, error: null });
-}
-
-function fmtDate(d) { const dt = new Date(d); return dt.toLocaleDateString(undefined,{month:'short',day:'numeric'}) + ' ' + dt.toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'}); }
-function escapeHtml(s) { const d = document.createElement('div'); d.textContent = s ?? ''; return d.innerHTML; }
-
-// ---------- Form binding (delegated, since content is re-rendered) ----------
-document.addEventListener('submit', async (e) => {
-  if (e.target.id === 'auth-form') return handleAuthSubmit(e);
-  e.preventDefault();
-  const f = new FormData(e.target);
-  try {
-    if (e.target.id === 'ticket-form') {
-      await api('/tickets', { method: 'POST', body: JSON.stringify(Object.fromEntries(f)) });
-      await refreshTab('tickets');
-    } else if (e.target.id === 'booking-form') {
-      const body = Object.fromEntries(f);
-      body.start_time = new Date(body.start_time).toISOString();
-      body.end_time = new Date(body.end_time).toISOString();
-      await api('/bookings', { method: 'POST', body: JSON.stringify(body) });
-      await refreshTab('bookings');
-    } else if (e.target.id === 'item-form') {
-      await api('/items', { method: 'POST', body: JSON.stringify(Object.fromEntries(f)) });
-      await refreshTab('equipment');
-    } else if (e.target.id === 'faq-form') {
-      await api('/faqs', { method: 'POST', body: JSON.stringify(Object.fromEntries(f)) });
-      await refreshTab('faqs');
-    } else if (e.target.id === 'announcement-form') {
-      await api('/announcements', { method: 'POST', body: JSON.stringify(Object.fromEntries(f)) });
-      await refreshTab('news');
-    }
-  } catch (err) { setState({ error: err.message }); }
-});
-
-function render() {
-  const app = document.getElementById('app');
-  if (state.view === 'home') { app.innerHTML = homeView(); loadPublicFaqs(); }
-  else if (state.view === 'auth') app.innerHTML = authView();
-  else if (state.view === 'dashboard' && state.user) app.innerHTML = dashboardView();
-  else app.innerHTML = homeView();
-}
-
-if (state.token && state.user) { state.view = 'dashboard'; loadDashboardData(); }
-render();
+  // exposed so content rendered inside iframes can call back via window.parent
+  window.loadTab = loadTab;
+  window.handleLogin = handleLogin;
+  window.handleForm = handleForm;
+  window.handleBooking = handleBooking;
+  window.deleteRecord = deleteRecord;
+  window.ticketAction = ticketAction;
+  window.bookingAction = bookingAction;
+  window.itemStatus = itemStatus;
+  window.userRole = userRole;
+  window.readNotification = readNotification;
+  window.logout = logout;
 </script>
 </body>
 </html>
