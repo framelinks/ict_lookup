@@ -4,7 +4,7 @@
   "description": "Full-stack ICT Service Management Platform for church organizations — requests, bookings, tickets, and admin management.",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js",
+    "start": "npm run migrate && npm run seed && node index.js",
     "dev": "nodemon index.js",
     "test": "jest --runInBand --detectOpenHandles --forceExit",
     "migrate": "node scripts/migrate.js",
