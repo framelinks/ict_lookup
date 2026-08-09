@@ -5,13 +5,17 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ICT Lookup</title>
 <script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
-  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+  body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+  .font-display { font-family: 'Plus Jakarta Sans', -apple-system, sans-serif; letter-spacing: -0.01em; }
   ::-webkit-scrollbar { width: 6px; }
   ::-webkit-scrollbar-thumb { background: #d4d4d4; border-radius: 3px; }
   .nav-item { color: #6b7280; }
   .nav-item.active { color: #ef4444; background: #fef2f2; }
   .nav-item svg { stroke: currentColor; }
+  main h1, main h2, .font-display { font-family: 'Plus Jakarta Sans', -apple-system, sans-serif; letter-spacing: -0.01em; }
   @media (max-width: 767px) {
     #sidebar { position: fixed; inset: 0; z-index: 50; width: 100% !important; transform: translateX(-100%); transition: transform .25s ease; }
     #sidebar.open { transform: translateX(0); }
@@ -32,6 +36,7 @@ const state = {
   viewRole: null,          // frontend-only override — lets the real admin preview other roles
   route: 'home',
   menuOpen: false,
+  notifOpen: false,
   data: {},
   error: null,
   loading: false
@@ -118,7 +123,12 @@ async function loadRoute(name) {
   state.loading = false;
   render();
 }
-function go(route) { location.hash = '#/' + route; }
+function go(route) {
+  // Role-preview persists across navigation until the admin explicitly exits it —
+  // dropping it silently on every click made "view as" feel broken/one-shot.
+  const qs = state.viewRole ? `?role=${state.viewRole}` : '';
+  location.hash = `#/${route}${qs}`;
+}
 function setViewRole(role) {
   const target = role || null;
   const qs = target ? `?role=${target}` : '';
@@ -146,6 +156,23 @@ function icon(name, cls = 'w-5 h-5') {
 
 function esc(s) { const d = document.createElement('div'); d.textContent = s ?? ''; return d.innerHTML; }
 function fmtDate(d) { const dt = new Date(d); return dt.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' · ' + dt.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }); }
+
+// Logo mark — a headset/support glyph in a rounded square, reads as "help desk"
+// at a glance rather than a generic abstract shape.
+function logoMark(size = 32) {
+  return `
+  <svg width="${size}" height="${size}" viewBox="0 0 32 32" fill="none">
+    <rect width="32" height="32" rx="9" fill="#ef4444"/>
+    <path d="M9 17v-2a7 7 0 0 1 14 0v2" stroke="white" stroke-width="1.8" stroke-linecap="round"/>
+    <rect x="7.5" y="16" width="4" height="6" rx="2" fill="white"/>
+    <rect x="20.5" y="16" width="4" height="6" rx="2" fill="white"/>
+    <path d="M23 22.5v.5a3 3 0 0 1-3 3h-2.5" stroke="white" stroke-width="1.8" stroke-linecap="round"/>
+  </svg>`;
+}
+function logoLockup(size = 28) {
+  return `<span class="flex items-center gap-2">${logoMark(size)}<span class="font-display font-bold text-lg"><span class="text-gray-900">ICT</span> <span class="font-medium text-gray-400">Lookup</span></span></span>`;
+}
+
 const STATUS_COLOR = {
   Pending: 'bg-amber-50 text-amber-700', Maintenance: 'bg-amber-50 text-amber-700',
   Assigned: 'bg-blue-50 text-blue-700', 'In Progress': 'bg-blue-50 text-blue-700',
@@ -170,7 +197,7 @@ function sidebar() {
   return `
   <aside id="sidebar" class="${state.menuOpen ? 'open' : ''} w-72 md:w-64 bg-white border-r border-gray-100 flex-shrink-0 flex flex-col h-full">
     <div class="flex items-center justify-between px-5 h-16 border-b border-gray-100 md:hidden">
-      <span class="font-bold text-lg"><span class="text-gray-900">ICT</span> <span class="font-normal text-gray-500">Lookup</span></span>
+      ${logoLockup(30)}
       <button onclick="setState({menuOpen:false})" class="p-2 -mr-2 text-gray-400">${icon('close')}</button>
     </div>
     <nav class="flex-1 overflow-y-auto px-3 py-4 space-y-1">
@@ -206,17 +233,45 @@ function sidebar() {
 function topbar() {
   const unread = (state.data.notifications || []).some(n => !n.is_read);
   return `
-  <header class="h-16 flex items-center justify-between px-4 md:px-6 border-b border-gray-100 flex-shrink-0">
+  <header class="h-16 flex items-center justify-between px-4 md:px-6 border-b border-gray-100 flex-shrink-0 relative">
     <div class="flex items-center gap-3">
       <button onclick="setState({menuOpen:true})" class="md:hidden p-2 -ml-2 text-gray-700">${icon('menu')}</button>
-      <span class="font-bold text-lg md:hidden"><span class="text-gray-900">ICT</span> <span class="font-normal text-gray-400">Lookup</span></span>
+      ${logoLockup(26)}
     </div>
-    <button onclick="go('notifications')" class="relative p-2 rounded-full hover:bg-gray-50 text-gray-500">
+    <button onclick="toggleNotifications(event)" class="relative p-2 rounded-full hover:bg-gray-50 text-gray-500">
       ${icon('bell')}
       ${unread ? `<span class="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-red-500"></span>` : ''}
     </button>
+    ${state.notifOpen ? notificationsPanel() : ''}
   </header>`;
 }
+
+function notificationsPanel() {
+  const list = state.data.notifications || [];
+  return `
+  <div id="notif-panel" class="absolute top-14 right-4 md:right-6 w-80 max-w-[calc(100vw-2rem)] bg-white border border-gray-100 rounded-2xl shadow-xl z-30 max-h-96 overflow-y-auto">
+    <div class="px-4 py-3 border-b border-gray-100 font-semibold text-sm">Notifications</div>
+    <div class="p-2">
+      ${list.length ? list.map(n => `
+        <div class="flex justify-between items-center gap-2 px-3 py-2.5 rounded-xl ${n.is_read ? 'opacity-50' : 'hover:bg-gray-50'}">
+          <span class="text-sm">${esc(n.message)}</span>
+          ${!n.is_read ? `<button onclick="markRead(${n.id})" class="text-[11px] text-red-600 underline whitespace-nowrap flex-shrink-0">Mark read</button>` : ''}
+        </div>`).join('') : `<div class="px-3 py-8 text-center text-sm text-gray-400">No notifications yet</div>`}
+    </div>
+  </div>`;
+}
+
+let notifLoaded = false;
+async function toggleNotifications(e) {
+  e.stopPropagation();
+  if (!state.notifOpen && !notifLoaded) {
+    try { state.data.notifications = await api('/notifications'); notifLoaded = true; } catch (_) {}
+  }
+  setState({ notifOpen: !state.notifOpen });
+}
+document.addEventListener('click', (e) => {
+  if (state.notifOpen && !e.target.closest('#notif-panel')) setState({ notifOpen: false });
+});
 
 /* ---------- views ---------- */
 
@@ -501,8 +556,8 @@ function authView() {
   return `
   <div class="min-h-screen flex items-center justify-center px-5">
     <div class="w-full max-w-sm">
-      <div class="text-center mb-8">
-        <span class="font-bold text-xl"><span class="text-gray-900">ICT</span> <span class="font-normal text-gray-400">Lookup</span></span>
+      <div class="text-center mb-8 flex justify-center">
+        ${logoLockup(36)}
       </div>
       ${state.error ? `<div class="bg-red-50 text-red-600 text-sm rounded-xl px-3 py-2 mb-4">${esc(state.error)}</div>` : ''}
       <form id="auth-form" class="space-y-3">
