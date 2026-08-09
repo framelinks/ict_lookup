@@ -1,0 +1,370 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Church ICT Service Management Platform API",
+    "description": "RESTful API for managing ICT support tickets, equipment/room bookings, users, FAQs, announcements, and notifications.",
+    "version": "1.0.0"
+  },
+  "servers": [
+    { "url": "/api", "description": "Relative to deployment host" }
+  ],
+  "tags": [
+    { "name": "Auth" },
+    { "name": "Tickets" },
+    { "name": "Bookings" },
+    { "name": "Items" },
+    { "name": "FAQs" },
+    { "name": "Announcements" },
+    { "name": "Notifications" },
+    { "name": "Admin" }
+  ],
+  "paths": {
+    "/auth/register": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Register a new user account",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": {
+            "type": "object",
+            "required": ["name", "email", "password"],
+            "properties": {
+              "name": { "type": "string", "example": "David Developer" },
+              "email": { "type": "string", "format": "email", "example": "david@church.org" },
+              "password": { "type": "string", "format": "password", "example": "securePassword123" }
+            }
+          } } }
+        },
+        "responses": {
+          "201": { "description": "User created" },
+          "400": { "description": "Invalid input" },
+          "409": { "description": "Email already registered" }
+        }
+      }
+    },
+    "/auth/login": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Log in and receive a JWT",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": {
+            "type": "object",
+            "required": ["email", "password"],
+            "properties": {
+              "email": { "type": "string", "format": "email" },
+              "password": { "type": "string", "format": "password" }
+            }
+          } } }
+        },
+        "responses": {
+          "200": { "description": "Authenticated" },
+          "401": { "description": "Invalid credentials" }
+        }
+      }
+    },
+    "/auth/me": {
+      "get": {
+        "tags": ["Auth"],
+        "summary": "Get the logged-in user's profile",
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "200": { "description": "Current user" }, "401": { "description": "Not authenticated" } }
+      }
+    },
+    "/tickets": {
+      "post": {
+        "tags": ["Tickets"],
+        "summary": "Submit an ICT support request",
+        "security": [{ "BearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": {
+            "type": "object",
+            "required": ["category", "description"],
+            "properties": {
+              "category": { "type": "string", "example": "Projector issue" },
+              "description": { "type": "string" },
+              "priority": { "type": "string", "enum": ["Low", "Normal", "High", "Urgent"] }
+            }
+          } } }
+        },
+        "responses": { "201": { "description": "Ticket created" }, "400": { "description": "Missing fields" } }
+      },
+      "get": {
+        "tags": ["Tickets"],
+        "summary": "List tickets (own tickets for Users; all tickets for Staff/Admin)",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "status", "in": "query", "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "List of tickets" } }
+      }
+    },
+    "/tickets/{id}": {
+      "get": {
+        "tags": ["Tickets"],
+        "summary": "Get a single ticket",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "responses": { "200": { "description": "Ticket" }, "404": { "description": "Not found" } }
+      }
+    },
+    "/tickets/{id}/assign": {
+      "patch": {
+        "tags": ["Tickets"],
+        "summary": "Assign a ticket to ICT staff (Staff/Admin only)",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": {
+            "type": "object", "required": ["assigned_to"], "properties": { "assigned_to": { "type": "integer" } }
+          } } }
+        },
+        "responses": { "200": { "description": "Ticket assigned" }, "403": { "description": "Forbidden" } }
+      }
+    },
+    "/tickets/{id}/status": {
+      "patch": {
+        "tags": ["Tickets"],
+        "summary": "Update ticket status through the workflow (Staff/Admin only)",
+        "description": "Valid transitions: Pending→Assigned, Assigned→In Progress, In Progress→Resolved, Resolved→Closed (plus limited backward moves).",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": {
+            "type": "object", "required": ["status"],
+            "properties": { "status": { "type": "string", "enum": ["Pending", "Assigned", "In Progress", "Resolved", "Closed"] } }
+          } } }
+        },
+        "responses": { "200": { "description": "Status updated" }, "400": { "description": "Invalid transition" } }
+      }
+    },
+    "/bookings": {
+      "post": {
+        "tags": ["Bookings"],
+        "summary": "Request an equipment or room booking",
+        "description": "Rejects the request with 409 if the item already has a Pending or Approved booking overlapping the requested window.",
+        "security": [{ "BearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": {
+            "type": "object",
+            "required": ["item_id", "start_time", "end_time"],
+            "properties": {
+              "item_id": { "type": "integer" },
+              "start_time": { "type": "string", "format": "date-time" },
+              "end_time": { "type": "string", "format": "date-time" },
+              "purpose": { "type": "string" }
+            }
+          } } }
+        },
+        "responses": {
+          "201": { "description": "Booking requested" },
+          "409": { "description": "Double-booking conflict" }
+        }
+      },
+      "get": {
+        "tags": ["Bookings"],
+        "summary": "List bookings (own for Users; all for Staff/Admin)",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "status", "in": "query", "schema": { "type": "string" } },
+          { "name": "item_id", "in": "query", "schema": { "type": "integer" } }
+        ],
+        "responses": { "200": { "description": "List of bookings" } }
+      }
+    },
+    "/bookings/{id}/approve": {
+      "patch": {
+        "tags": ["Bookings"],
+        "summary": "Approve a booking (Staff/Admin only)",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "responses": { "200": { "description": "Approved" }, "409": { "description": "Conflicts with an approved booking" } }
+      }
+    },
+    "/bookings/{id}/reject": {
+      "patch": {
+        "tags": ["Bookings"],
+        "summary": "Reject a booking (Staff/Admin only)",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "responses": { "200": { "description": "Rejected" } }
+      }
+    },
+    "/bookings/{id}/cancel": {
+      "patch": {
+        "tags": ["Bookings"],
+        "summary": "Cancel your own booking",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "responses": { "200": { "description": "Cancelled" } }
+      }
+    },
+    "/items": {
+      "get": {
+        "tags": ["Items"],
+        "summary": "List equipment and rooms",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "type", "in": "query", "schema": { "type": "string", "enum": ["Equipment", "Room"] } }],
+        "responses": { "200": { "description": "List of items" } }
+      },
+      "post": {
+        "tags": ["Items"],
+        "summary": "Add new equipment/room (Admin only)",
+        "security": [{ "BearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": {
+            "type": "object", "required": ["name", "type"],
+            "properties": {
+              "name": { "type": "string" },
+              "type": { "type": "string", "enum": ["Equipment", "Room"] },
+              "description": { "type": "string" }
+            }
+          } } }
+        },
+        "responses": { "201": { "description": "Created" } }
+      }
+    },
+    "/items/{id}": {
+      "patch": {
+        "tags": ["Items"],
+        "summary": "Update item details/status (Admin only)",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "responses": { "200": { "description": "Updated" } }
+      },
+      "delete": {
+        "tags": ["Items"],
+        "summary": "Delete an item (Admin only)",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "responses": { "204": { "description": "Deleted" } }
+      }
+    },
+    "/faqs": {
+      "get": {
+        "tags": ["FAQs"],
+        "summary": "List FAQs (public)",
+        "responses": { "200": { "description": "List of FAQs" } }
+      },
+      "post": {
+        "tags": ["FAQs"],
+        "summary": "Add an FAQ (Admin only)",
+        "security": [{ "BearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": {
+            "type": "object", "required": ["question", "answer"],
+            "properties": { "question": { "type": "string" }, "answer": { "type": "string" } }
+          } } }
+        },
+        "responses": { "201": { "description": "Created" } }
+      }
+    },
+    "/faqs/{id}": {
+      "delete": {
+        "tags": ["FAQs"],
+        "summary": "Delete an FAQ (Admin only)",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "responses": { "204": { "description": "Deleted" } }
+      }
+    },
+    "/announcements": {
+      "get": {
+        "tags": ["Announcements"],
+        "summary": "List announcements (public)",
+        "responses": { "200": { "description": "List of announcements" } }
+      },
+      "post": {
+        "tags": ["Announcements"],
+        "summary": "Publish an announcement (Admin only)",
+        "security": [{ "BearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": {
+            "type": "object", "required": ["title", "body"],
+            "properties": { "title": { "type": "string" }, "body": { "type": "string" } }
+          } } }
+        },
+        "responses": { "201": { "description": "Created" } }
+      }
+    },
+    "/announcements/{id}": {
+      "delete": {
+        "tags": ["Announcements"],
+        "summary": "Delete an announcement (Admin only)",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "responses": { "204": { "description": "Deleted" } }
+      }
+    },
+    "/notifications": {
+      "get": {
+        "tags": ["Notifications"],
+        "summary": "List the logged-in user's notifications",
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "200": { "description": "List of notifications" } }
+      }
+    },
+    "/notifications/{id}/read": {
+      "patch": {
+        "tags": ["Notifications"],
+        "summary": "Mark a notification as read",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "responses": { "200": { "description": "Updated" } }
+      }
+    },
+    "/admin/users": {
+      "get": {
+        "tags": ["Admin"],
+        "summary": "List all users (Admin only)",
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "200": { "description": "List of users" } }
+      }
+    },
+    "/admin/users/{id}/role": {
+      "patch": {
+        "tags": ["Admin"],
+        "summary": "Change a user's role (Admin only)",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": {
+            "type": "object", "required": ["role"],
+            "properties": { "role": { "type": "string", "enum": ["User", "Staff", "Admin"] } }
+          } } }
+        },
+        "responses": { "200": { "description": "Updated" } }
+      }
+    },
+    "/admin/users/{id}": {
+      "delete": {
+        "tags": ["Admin"],
+        "summary": "Delete a user (Admin only)",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "responses": { "204": { "description": "Deleted" } }
+      }
+    },
+    "/admin/stats": {
+      "get": {
+        "tags": ["Admin"],
+        "summary": "Basic platform statistics (Admin only)",
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "200": { "description": "Stats object" } }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "BearerAuth": { "type": "http", "scheme": "bearer", "bearerFormat": "JWT" }
+    }
+  }
+}

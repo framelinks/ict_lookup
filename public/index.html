@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Parish ICT Desk</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        colors: {
+          ink: '#1B2430',
+          parchment: '#F6F3EC',
+          brass: '#B08D57',
+          rust: '#B0532C',
+          moss: '#3F5B4A'
+        },
+        fontFamily: {
+          serif: ['Fraunces', 'serif'],
+          sans: ['Inter', 'sans-serif']
+        }
+      }
+    }
+  }
+</script>
+<style>
+  body { font-family: 'Inter', sans-serif; background: #F6F3EC; }
+  .font-serif { font-family: 'Fraunces', serif; }
+  ::-webkit-scrollbar { width: 8px; }
+  ::-webkit-scrollbar-thumb { background: #B08D57; border-radius: 4px; }
+  .status-pill { font-size: 0.7rem; letter-spacing: 0.03em; text-transform: uppercase; font-weight: 600; padding: 0.2rem 0.6rem; border-radius: 999px; }
+  .st-Pending { background:#FDF0E3; color:#B0532C; }
+  .st-Assigned { background:#EAF0FB; color:#2C4E9E; }
+  .st-InProgress { background:#EAF0FB; color:#2C4E9E; }
+  .st-Resolved { background:#E9F3EC; color:#3F5B4A; }
+  .st-Closed { background:#EDEDED; color:#555; }
+  .st-Approved { background:#E9F3EC; color:#3F5B4A; }
+  .st-Rejected { background:#FBE9E7; color:#A02E1F; }
+  .st-Cancelled { background:#EDEDED; color:#555; }
+  .tab-btn.active { border-color: #1B2430; color: #1B2430; }
+  .tab-btn { border-color: transparent; color: #8a8578; }
+</style>
+</head>
+<body class="text-ink min-h-screen">
+
+<div id="app"></div>
+
+<script>
+const API = '/api';
+let state = {
+  token: localStorage.getItem('token') || null,
+  user: JSON.parse(localStorage.getItem('user') || 'null'),
+  view: 'home',
+  tab: 'tickets',
+  items: [], tickets: [], bookings: [], faqs: [], announcements: [], notifications: [], users: [], stats: null,
+  error: null
+};
+
+function setState(patch) { Object.assign(state, patch); render(); }
+
+async function api(path, opts = {}) {
+  const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
+  if (state.token) headers['Authorization'] = 'Bearer ' + state.token;
+  const res = await fetch(API + path, { ...opts, headers });
+  let data = {};
+  try { data = await res.json(); } catch (e) {}
+  if (!res.ok) throw new Error(data.error || 'Request failed');
+  return data;
+}
+
+function login(token, user) {
+  state.token = token; state.user = user;
+  localStorage.setItem('token', token);
+  localStorage.setItem('user', JSON.stringify(user));
+  setState({ view: 'dashboard', tab: 'tickets' });
+  loadDashboardData();
+}
+function logout() {
+  localStorage.removeItem('token'); localStorage.removeItem('user');
+  setState({ token: null, user: null, view: 'home' });
+}
+
+async function loadDashboardData() {
+  try {
+    const [items, tickets, bookings, faqs, announcements, notifications] = await Promise.all([
+      api('/items'), api('/tickets'), api('/bookings'), api('/faqs'), api('/announcements'), api('/notifications')
+    ]);
+    setState({ items, tickets, bookings, faqs, announcements, notifications });
+    if (state.user.role === 'Admin') {
+      const [users, stats] = await Promise.all([api('/admin/users'), api('/admin/stats')]);
+      setState({ users, stats });
+    }
+  } catch (e) { setState({ error: e.message }); }
+}
+
+// ---------- Views ----------
+
+function homeView() {
+  return `
+  <nav class="border-b border-ink/10 px-5 py-4 flex justify-between items-center bg-parchment sticky top-0 z-10">
+    <div class="font-serif text-lg font-semibold">Parish ICT Desk</div>
+    <button onclick="setState({view:'auth', tab:'login'})" class="text-sm font-medium bg-ink text-parchment px-4 py-2 rounded-full">Sign in</button>
+  </nav>
+  <main class="max-w-2xl mx-auto px-5 pt-14 pb-20">
+    <p class="text-xs uppercase tracking-widest text-brass font-semibold mb-3">ICT Service Management</p>
+    <h1 class="font-serif text-4xl leading-tight mb-4">One desk for every request, booking, and ticket.</h1>
+    <p class="text-ink/70 mb-8 leading-relaxed">Submit ICT support requests, reserve rooms and multimedia equipment, and track everything from Pending to Closed — replacing the WhatsApp thread and the shared spreadsheet.</p>
+    <div class="flex gap-3 mb-14">
+      <button onclick="setState({view:'auth', tab:'register'})" class="bg-rust text-white px-5 py-3 rounded-full font-medium text-sm">Create account</button>
+      <button onclick="setState({view:'auth', tab:'login'})" class="border border-ink/20 px-5 py-3 rounded-full font-medium text-sm">Sign in</button>
+    </div>
+    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-16">
+      ${['Request ICT support','Book rooms & gear','Track ticket status'].map((t,i) => `
+        <div class="border border-ink/10 rounded-2xl p-5 bg-white/50">
+          <div class="text-brass font-serif text-2xl mb-2">0${i+1}</div>
+          <div class="font-medium text-sm">${t}</div>
+        </div>`).join('')}
+    </div>
+    <h2 class="font-serif text-xl mb-4">Frequently asked</h2>
+    <div id="public-faqs" class="space-y-3 mb-16">Loading…</div>
+  </main>`;
+}
+
+async function loadPublicFaqs() {
+  try {
+    const faqs = await api('/faqs');
+    const el = document.getElementById('public-faqs');
+    if (!el) return;
+    el.innerHTML = faqs.length ? faqs.map(f => `
+      <div class="border-b border-ink/10 pb-3">
+        <div class="font-medium text-sm">${escapeHtml(f.question)}</div>
+        <div class="text-ink/60 text-sm mt-1">${escapeHtml(f.answer)}</div>
+      </div>`).join('') : `<p class="text-ink/50 text-sm">No FAQs published yet.</p>`;
+  } catch (e) {}
+}
+
+function authView() {
+  const isLogin = state.tab === 'login';
+  return `
+  <div class="min-h-screen flex items-center justify-center px-5">
+    <div class="w-full max-w-sm">
+      <div class="text-center mb-8">
+        <div class="font-serif text-2xl mb-1">Parish ICT Desk</div>
+        <p class="text-ink/50 text-sm">${isLogin ? 'Welcome back' : 'Create your account'}</p>
+      </div>
+      <div class="flex border-b border-ink/10 mb-6 text-sm">
+        <button onclick="setState({tab:'login'})" class="tab-btn ${isLogin?'active':''} border-b-2 pb-2 px-4 font-medium">Sign in</button>
+        <button onclick="setState({tab:'register'})" class="tab-btn ${!isLogin?'active':''} border-b-2 pb-2 px-4 font-medium">Register</button>
+      </div>
+      ${state.error ? `<div class="bg-rust/10 text-rust text-sm rounded-lg px-3 py-2 mb-4">${escapeHtml(state.error)}</div>` : ''}
+      <form id="auth-form" class="space-y-3">
+        ${!isLogin ? `<input required name="name" placeholder="Full name" class="w-full border border-ink/15 rounded-lg px-4 py-3 text-sm bg-white">` : ''}
+        <input required name="email" type="email" placeholder="Email" class="w-full border border-ink/15 rounded-lg px-4 py-3 text-sm bg-white">
+        <input required name="password" type="password" placeholder="Password" class="w-full border border-ink/15 rounded-lg px-4 py-3 text-sm bg-white">
+        <button type="submit" class="w-full bg-ink text-parchment rounded-lg py-3 text-sm font-medium mt-2">${isLogin ? 'Sign in' : 'Create account'}</button>
+      </form>
+      <button onclick="setState({view:'home', error:null})" class="text-ink/40 text-xs mt-6 block mx-auto">&larr; Back to home</button>
+    </div>
+  </div>`;
+}
+
+async function handleAuthSubmit(e) {
+  e.preventDefault();
+  const f = new FormData(e.target);
+  const isLogin = state.tab === 'login';
+  try {
+    if (isLogin) {
+      const data = await api('/auth/login', { method: 'POST', body: JSON.stringify({ email: f.get('email'), password: f.get('password') }) });
+      login(data.token, data.user);
+    } else {
+      await api('/auth/register', { method: 'POST', body: JSON.stringify({ name: f.get('name'), email: f.get('email'), password: f.get('password') }) });
+      const data = await api('/auth/login', { method: 'POST', body: JSON.stringify({ email: f.get('email'), password: f.get('password') }) });
+      login(data.token, data.user);
+    }
+  } catch (err) { setState({ error: err.message }); }
+}
+
+function dashboardView() {
+  const u = state.user;
+  const isStaffOrAdmin = u.role === 'Staff' || u.role === 'Admin';
+  const tabs = [['tickets','Tickets'], ['bookings','Bookings'], ['equipment','Equipment & Rooms'], ['faqs','FAQs'], ['news','Announcements'], ['alerts','Notifications']];
+  if (u.role === 'Admin') tabs.push(['admin','Admin']);
+
+  return `
+  <nav class="border-b border-ink/10 px-5 py-4 flex justify-between items-center bg-parchment sticky top-0 z-10">
+    <div class="font-serif text-lg font-semibold">Parish ICT Desk</div>
+    <div class="flex items-center gap-3 text-sm">
+      <span class="text-ink/50 hidden sm:inline">${escapeHtml(u.name)} · ${u.role}</span>
+      <button onclick="logout()" class="border border-ink/20 px-3 py-1.5 rounded-full text-xs font-medium">Sign out</button>
+    </div>
+  </nav>
+  <div class="max-w-3xl mx-auto px-5 pt-6">
+    ${state.error ? `<div class="bg-rust/10 text-rust text-sm rounded-lg px-3 py-2 mb-4">${escapeHtml(state.error)}</div>` : ''}
+    <div class="flex gap-1 overflow-x-auto border-b border-ink/10 mb-6 text-sm no-scrollbar">
+      ${tabs.map(([id,label]) => `<button onclick="setState({tab:'${id}', error:null})" class="tab-btn ${state.tab===id?'active':''} border-b-2 pb-3 px-3 font-medium whitespace-nowrap">${label}</button>`).join('')}
+    </div>
+    <div id="tab-content" class="pb-24">${renderTab()}</div>
+  </div>`;
+}
+
+function renderTab() {
+  const u = state.user;
+  const isStaffOrAdmin = u.role === 'Staff' || u.role === 'Admin';
+  if (state.tab === 'tickets') return ticketsTab(isStaffOrAdmin);
+  if (state.tab === 'bookings') return bookingsTab(isStaffOrAdmin);
+  if (state.tab === 'equipment') return equipmentTab(u.role === 'Admin');
+  if (state.tab === 'faqs') return faqsTab(u.role === 'Admin');
+  if (state.tab === 'news') return newsTab(u.role === 'Admin');
+  if (state.tab === 'alerts') return alertsTab();
+  if (state.tab === 'admin' && u.role === 'Admin') return adminTab();
+  return '';
+}
+
+function pill(status) { return `<span class="status-pill st-${status.replace(' ','')}">${status}</span>`; }
+
+function ticketsTab(isStaffOrAdmin) {
+  return `
+  <div class="bg-white border border-ink/10 rounded-2xl p-5 mb-6">
+    <h3 class="font-serif text-lg mb-3">New support request</h3>
+    <form id="ticket-form" class="space-y-3">
+      <input required name="category" placeholder="Category (e.g. Projector, Network, Audio)" class="w-full border border-ink/15 rounded-lg px-4 py-2.5 text-sm">
+      <textarea required name="description" placeholder="Describe the issue" rows="3" class="w-full border border-ink/15 rounded-lg px-4 py-2.5 text-sm"></textarea>
+      <select name="priority" class="w-full border border-ink/15 rounded-lg px-4 py-2.5 text-sm">
+        <option value="Normal">Normal priority</option><option value="Low">Low priority</option>
+        <option value="High">High priority</option><option value="Urgent">Urgent</option>
+      </select>
+      <button class="bg-ink text-parchment rounded-lg px-5 py-2.5 text-sm font-medium">Submit request</button>
+    </form>
+  </div>
+  <h3 class="font-serif text-lg mb-3">${isStaffOrAdmin ? 'All requests' : 'My requests'}</h3>
+  <div class="space-y-3">
+    ${state.tickets.length ? state.tickets.map(t => `
+      <div class="border border-ink/10 rounded-xl p-4 bg-white/60">
+        <div class="flex justify-between items-start mb-1">
+          <div class="font-medium text-sm">${escapeHtml(t.category)}</div>
+          ${pill(t.status)}
+        </div>
+        <p class="text-ink/60 text-sm mb-2">${escapeHtml(t.description)}</p>
+        <div class="text-xs text-ink/40 mb-2">#${t.id} · ${t.priority} priority ${t.requester_name ? '· by ' + escapeHtml(t.requester_name) : ''} ${t.assignee_name ? '· assigned to ' + escapeHtml(t.assignee_name) : ''}</div>
+        ${isStaffOrAdmin ? ticketActions(t) : ''}
+      </div>`).join('') : `<p class="text-ink/40 text-sm">No requests yet.</p>`}
+  </div>`;
+}
+
+function ticketActions(t) {
+  const nextMap = { Pending: 'Assigned', Assigned: 'In Progress', 'In Progress': 'Resolved', Resolved: 'Closed' };
+  const next = nextMap[t.status];
+  return `<div class="flex gap-2 flex-wrap">
+    ${t.status === 'Pending' ? `<button onclick="assignTicket(${t.id})" class="text-xs border border-ink/20 rounded-full px-3 py-1">Assign to me</button>` : ''}
+    ${next ? `<button onclick="advanceTicket(${t.id}, '${next}')" class="text-xs bg-moss text-white rounded-full px-3 py-1">Move to ${next}</button>` : ''}
+  </div>`;
+}
+
+async function assignTicket(id) {
+  try { await api(`/tickets/${id}/assign`, { method: 'PATCH', body: JSON.stringify({ assigned_to: state.user.id }) }); await refreshTab('tickets'); }
+  catch (e) { setState({ error: e.message }); }
+}
+async function advanceTicket(id, status) {
+  try { await api(`/tickets/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }); await refreshTab('tickets'); }
+  catch (e) { setState({ error: e.message }); }
+}
+
+function bookingsTab(isStaffOrAdmin) {
+  return `
+  <div class="bg-white border border-ink/10 rounded-2xl p-5 mb-6">
+    <h3 class="font-serif text-lg mb-3">Book equipment or a room</h3>
+    <form id="booking-form" class="space-y-3">
+      <select required name="item_id" class="w-full border border-ink/15 rounded-lg px-4 py-2.5 text-sm">
+        <option value="">Select item…</option>
+        ${state.items.filter(i => i.status === 'Available').map(i => `<option value="${i.id}">${escapeHtml(i.name)} (${i.type})</option>`).join('')}
+      </select>
+      <div class="grid grid-cols-2 gap-3">
+        <input required name="start_time" type="datetime-local" class="w-full border border-ink/15 rounded-lg px-3 py-2.5 text-sm">
+        <input required name="end_time" type="datetime-local" class="w-full border border-ink/15 rounded-lg px-3 py-2.5 text-sm">
+      </div>
+      <input name="purpose" placeholder="Purpose (optional)" class="w-full border border-ink/15 rounded-lg px-4 py-2.5 text-sm">
+      <button class="bg-ink text-parchment rounded-lg px-5 py-2.5 text-sm font-medium">Request booking</button>
+    </form>
+  </div>
+  <h3 class="font-serif text-lg mb-3">${isStaffOrAdmin ? 'All bookings' : 'My bookings'}</h3>
+  <div class="space-y-3">
+    ${state.bookings.length ? state.bookings.map(b => `
+      <div class="border border-ink/10 rounded-xl p-4 bg-white/60">
+        <div class="flex justify-between items-start mb-1">
+          <div class="font-medium text-sm">${escapeHtml(b.item_name || 'Item #' + b.item_id)}</div>
+          ${pill(b.status)}
+        </div>
+        <div class="text-xs text-ink/50 mb-2">${fmtDate(b.start_time)} → ${fmtDate(b.end_time)} ${b.user_name ? '· by ' + escapeHtml(b.user_name) : ''}</div>
+        <div class="flex gap-2">
+          ${isStaffOrAdmin && b.status === 'Pending' ? `
+            <button onclick="bookingAction(${b.id},'approve')" class="text-xs bg-moss text-white rounded-full px-3 py-1">Approve</button>
+            <button onclick="bookingAction(${b.id},'reject')" class="text-xs border border-rust text-rust rounded-full px-3 py-1">Reject</button>` : ''}
+          ${(b.status === 'Pending' || b.status === 'Approved') ? `<button onclick="bookingAction(${b.id},'cancel')" class="text-xs text-ink/40 underline">Cancel</button>` : ''}
+        </div>
+      </div>`).join('') : `<p class="text-ink/40 text-sm">No bookings yet.</p>`}
+  </div>`;
+}
+
+async function bookingAction(id, action) {
+  try { await api(`/bookings/${id}/${action}`, { method: 'PATCH' }); await refreshTab('bookings'); }
+  catch (e) { setState({ error: e.message }); }
+}
+
+function equipmentTab(isAdmin) {
+  return `
+  ${isAdmin ? `
+  <div class="bg-white border border-ink/10 rounded-2xl p-5 mb-6">
+    <h3 class="font-serif text-lg mb-3">Add equipment or room</h3>
+    <form id="item-form" class="space-y-3">
+      <input required name="name" placeholder="Name" class="w-full border border-ink/15 rounded-lg px-4 py-2.5 text-sm">
+      <select required name="type" class="w-full border border-ink/15 rounded-lg px-4 py-2.5 text-sm">
+        <option value="Equipment">Equipment</option><option value="Room">Room</option>
+      </select>
+      <input name="description" placeholder="Description (optional)" class="w-full border border-ink/15 rounded-lg px-4 py-2.5 text-sm">
+      <button class="bg-ink text-parchment rounded-lg px-5 py-2.5 text-sm font-medium">Add item</button>
+    </form>
+  </div>` : ''}
+  <h3 class="font-serif text-lg mb-3">Equipment & rooms</h3>
+  <div class="grid sm:grid-cols-2 gap-3">
+    ${state.items.length ? state.items.map(i => `
+      <div class="border border-ink/10 rounded-xl p-4 bg-white/60">
+        <div class="flex justify-between items-start mb-1">
+          <div class="font-medium text-sm">${escapeHtml(i.name)}</div>
+          <span class="text-xs text-ink/40">${i.type}</span>
+        </div>
+        <p class="text-ink/50 text-xs mb-2">${escapeHtml(i.description || '')}</p>
+        ${isAdmin ? `
+        <select onchange="updateItemStatus(${i.id}, this.value)" class="text-xs border border-ink/15 rounded-full px-2 py-1">
+          ${['Available','Maintenance','Retired'].map(s => `<option value="${s}" ${s===i.status?'selected':''}>${s}</option>`).join('')}
+        </select>` : `<span class="status-pill ${i.status==='Available'?'st-Approved':'st-Cancelled'}">${i.status}</span>`}
+      </div>`).join('') : `<p class="text-ink/40 text-sm">No items yet.</p>`}
+  </div>`;
+}
+
+async function updateItemStatus(id, status) {
+  try { await api(`/items/${id}`, { method: 'PATCH', body: JSON.stringify({ status }) }); await refreshTab('equipment'); }
+  catch (e) { setState({ error: e.message }); }
+}
+
+function faqsTab(isAdmin) {
+  return `
+  ${isAdmin ? `
+  <div class="bg-white border border-ink/10 rounded-2xl p-5 mb-6">
+    <h3 class="font-serif text-lg mb-3">Add FAQ</h3>
+    <form id="faq-form" class="space-y-3">
+      <input required name="question" placeholder="Question" class="w-full border border-ink/15 rounded-lg px-4 py-2.5 text-sm">
+      <textarea required name="answer" placeholder="Answer" rows="2" class="w-full border border-ink/15 rounded-lg px-4 py-2.5 text-sm"></textarea>
+      <button class="bg-ink text-parchment rounded-lg px-5 py-2.5 text-sm font-medium">Publish FAQ</button>
+    </form>
+  </div>` : ''}
+  <div class="space-y-3">
+    ${state.faqs.length ? state.faqs.map(f => `
+      <div class="border border-ink/10 rounded-xl p-4 bg-white/60">
+        <div class="font-medium text-sm mb-1">${escapeHtml(f.question)}</div>
+        <p class="text-ink/60 text-sm">${escapeHtml(f.answer)}</p>
+        ${isAdmin ? `<button onclick="deleteFaq(${f.id})" class="text-xs text-rust underline mt-2">Delete</button>` : ''}
+      </div>`).join('') : `<p class="text-ink/40 text-sm">No FAQs yet.</p>`}
+  </div>`;
+}
+async function deleteFaq(id) { try { await api(`/faqs/${id}`, { method: 'DELETE' }); await refreshTab('faqs'); } catch (e) { setState({ error: e.message }); } }
+
+function newsTab(isAdmin) {
+  return `
+  ${isAdmin ? `
+  <div class="bg-white border border-ink/10 rounded-2xl p-5 mb-6">
+    <h3 class="font-serif text-lg mb-3">Publish announcement</h3>
+    <form id="announcement-form" class="space-y-3">
+      <input required name="title" placeholder="Title" class="w-full border border-ink/15 rounded-lg px-4 py-2.5 text-sm">
+      <textarea required name="body" placeholder="Message" rows="3" class="w-full border border-ink/15 rounded-lg px-4 py-2.5 text-sm"></textarea>
+      <button class="bg-ink text-parchment rounded-lg px-5 py-2.5 text-sm font-medium">Publish</button>
+    </form>
+  </div>` : ''}
+  <div class="space-y-3">
+    ${state.announcements.length ? state.announcements.map(a => `
+      <div class="border border-ink/10 rounded-xl p-4 bg-white/60">
+        <div class="font-medium text-sm mb-1">${escapeHtml(a.title)}</div>
+        <p class="text-ink/60 text-sm mb-1">${escapeHtml(a.body)}</p>
+        <div class="text-xs text-ink/40">${fmtDate(a.created_at)}</div>
+      </div>`).join('') : `<p class="text-ink/40 text-sm">No announcements yet.</p>`}
+  </div>`;
+}
+
+function alertsTab() {
+  return `<div class="space-y-3">
+    ${state.notifications.length ? state.notifications.map(n => `
+      <div class="border border-ink/10 rounded-xl p-4 ${n.is_read ? 'bg-white/40' : 'bg-white'} flex justify-between items-center">
+        <span class="text-sm ${n.is_read ? 'text-ink/50' : ''}">${escapeHtml(n.message)}</span>
+        ${!n.is_read ? `<button onclick="markRead(${n.id})" class="text-xs text-brass underline whitespace-nowrap ml-3">Mark read</button>` : ''}
+      </div>`).join('') : `<p class="text-ink/40 text-sm">No notifications yet.</p>`}
+  </div>`;
+}
+async function markRead(id) { try { await api(`/notifications/${id}/read`, { method: 'PATCH' }); await refreshTab('alerts'); } catch (e) {} }
+
+function adminTab() {
+  const s = state.stats;
+  return `
+  ${s ? `
+  <div class="grid grid-cols-3 gap-3 mb-6">
+    <div class="border border-ink/10 rounded-xl p-4 bg-white/60 text-center">
+      <div class="font-serif text-2xl">${s.total_users}</div><div class="text-xs text-ink/50">Users</div>
+    </div>
+    <div class="border border-ink/10 rounded-xl p-4 bg-white/60 text-center">
+      <div class="font-serif text-2xl">${s.total_tickets}</div><div class="text-xs text-ink/50">Tickets</div>
+    </div>
+    <div class="border border-ink/10 rounded-xl p-4 bg-white/60 text-center">
+      <div class="font-serif text-2xl">${s.total_bookings}</div><div class="text-xs text-ink/50">Bookings</div>
+    </div>
+  </div>` : ''}
+  <h3 class="font-serif text-lg mb-3">Users</h3>
+  <div class="space-y-2">
+    ${state.users.map(u => `
+      <div class="border border-ink/10 rounded-xl p-3 bg-white/60 flex justify-between items-center">
+        <div>
+          <div class="font-medium text-sm">${escapeHtml(u.name)}</div>
+          <div class="text-xs text-ink/40">${escapeHtml(u.email)}</div>
+        </div>
+        <select onchange="changeRole(${u.id}, this.value)" class="text-xs border border-ink/15 rounded-full px-2 py-1">
+          ${['User','Staff','Admin'].map(r => `<option value="${r}" ${r===u.role?'selected':''}>${r}</option>`).join('')}
+        </select>
+      </div>`).join('')}
+  </div>`;
+}
+async function changeRole(id, role) { try { await api(`/admin/users/${id}/role`, { method: 'PATCH', body: JSON.stringify({ role }) }); await refreshTab('admin'); } catch (e) { setState({ error: e.message }); } }
+
+async function refreshTab(tab) {
+  await loadDashboardData();
+  setState({ tab, error: null });
+}
+
+function fmtDate(d) { const dt = new Date(d); return dt.toLocaleDateString(undefined,{month:'short',day:'numeric'}) + ' ' + dt.toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'}); }
+function escapeHtml(s) { const d = document.createElement('div'); d.textContent = s ?? ''; return d.innerHTML; }
+
+// ---------- Form binding (delegated, since content is re-rendered) ----------
+document.addEventListener('submit', async (e) => {
+  if (e.target.id === 'auth-form') return handleAuthSubmit(e);
+  e.preventDefault();
+  const f = new FormData(e.target);
+  try {
+    if (e.target.id === 'ticket-form') {
+      await api('/tickets', { method: 'POST', body: JSON.stringify(Object.fromEntries(f)) });
+      await refreshTab('tickets');
+    } else if (e.target.id === 'booking-form') {
+      const body = Object.fromEntries(f);
+      body.start_time = new Date(body.start_time).toISOString();
+      body.end_time = new Date(body.end_time).toISOString();
+      await api('/bookings', { method: 'POST', body: JSON.stringify(body) });
+      await refreshTab('bookings');
+    } else if (e.target.id === 'item-form') {
+      await api('/items', { method: 'POST', body: JSON.stringify(Object.fromEntries(f)) });
+      await refreshTab('equipment');
+    } else if (e.target.id === 'faq-form') {
+      await api('/faqs', { method: 'POST', body: JSON.stringify(Object.fromEntries(f)) });
+      await refreshTab('faqs');
+    } else if (e.target.id === 'announcement-form') {
+      await api('/announcements', { method: 'POST', body: JSON.stringify(Object.fromEntries(f)) });
+      await refreshTab('news');
+    }
+  } catch (err) { setState({ error: err.message }); }
+});
+
+function render() {
+  const app = document.getElementById('app');
+  if (state.view === 'home') { app.innerHTML = homeView(); loadPublicFaqs(); }
+  else if (state.view === 'auth') app.innerHTML = authView();
+  else if (state.view === 'dashboard' && state.user) app.innerHTML = dashboardView();
+  else app.innerHTML = homeView();
+}
+
+if (state.token && state.user) { state.view = 'dashboard'; loadDashboardData(); }
+render();
+</script>
+</body>
+</html>
