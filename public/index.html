@@ -3,532 +3,562 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Parish ICT Desk</title>
+<title>ICT Lookup</title>
 <script src="https://cdn.tailwindcss.com"></script>
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
 <style>
-  ::-webkit-scrollbar { width: 6px; height: 6px; }
-  ::-webkit-scrollbar-thumb { background: #64748b; border-radius: 3px; }
-  iframe.data { width: 100%; height: 100%; border: none; background: white; }
-  @media (max-width: 768px) {
-    .menu { position: fixed; inset: 0; z-index: 50; transform: translateX(-100%); transition: transform .3s ease; }
-    .menu.open { transform: translateX(0); }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-thumb { background: #d4d4d4; border-radius: 3px; }
+  .nav-item { color: #6b7280; }
+  .nav-item.active { color: #ef4444; background: #fef2f2; }
+  .nav-item svg { stroke: currentColor; }
+  @media (max-width: 767px) {
+    #sidebar { position: fixed; inset: 0; z-index: 50; transform: translateX(-100%); transition: transform .25s ease; }
+    #sidebar.open { transform: translateX(0); }
   }
 </style>
 </head>
-<body class="bg-slate-100 text-slate-800 antialiased h-screen overflow-hidden">
-  <div id="root" class="flex h-full">
-
-    <!-- Sidebar -->
-    <aside id="menu" class="menu w-64 bg-slate-900 text-white flex-shrink-0 flex flex-col">
-      <div class="p-4 border-b border-slate-700 flex items-center justify-between">
-        <h1 class="text-lg font-bold tracking-wide">Parish ICT Desk</h1>
-        <button id="closeMenuBtn" class="md:hidden text-slate-400 hover:text-white">
-          <i class="fa fa-times"></i>
-        </button>
-      </div>
-      <nav id="menuList" class="flex-1 overflow-y-auto p-3 space-y-1"></nav>
-      <div id="userBox" class="p-3 border-t border-slate-700 text-xs text-slate-400"></div>
-    </aside>
-
-    <!-- Main -->
-    <main class="flex-1 flex flex-col min-w-0">
-      <header class="bg-white border-b border-slate-200 px-4 py-3 flex items-center justify-between gap-3 shadow-sm">
-        <div class="flex items-center gap-3">
-          <button id="openMenuBtn" class="md:hidden p-2 rounded-lg hover:bg-slate-100">
-            <i class="fa fa-bars"></i>
-          </button>
-          <div>
-            <h2 id="pageTitle" class="font-semibold text-lg">Select a section</h2>
-            <p id="pageInfo" class="text-xs text-slate-500"></p>
-          </div>
-        </div>
-        <button id="bellBtn" class="relative p-2 rounded-lg hover:bg-slate-100 text-slate-600" title="Notifications">
-          <i class="fa fa-bell"></i>
-          <span id="bellDot" class="hidden absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-rose-500"></span>
-        </button>
-      </header>
-
-      <div id="content" class="flex-1 relative overflow-hidden">
-        <iframe id="mainFrame" class="data absolute inset-0"
-          srcdoc="<div style='padding:2rem;font-family:system-ui;color:#64748b'>Select a section from the menu.</div>">
-        </iframe>
-      </div>
-    </main>
-
-    <!-- Fullsheet -->
-    <section id="fullSheet" class="fixed inset-0 z-50 bg-white flex flex-col hidden">
-      <div class="flex items-center justify-between px-4 py-3 border-b border-slate-200 bg-slate-50">
-        <h3 id="fullSheetTitle" class="font-semibold text-lg"></h3>
-        <button id="closeFullSheetBtn" class="p-2 rounded-lg hover:bg-slate-200">
-          <i class="fa fa-times text-lg"></i>
-        </button>
-      </div>
-      <iframe id="fullFrame" class="data flex-1"></iframe>
-    </section>
-  </div>
+<body class="bg-white text-gray-900">
+<div id="app"></div>
 
 <script>
-  // ============================================
-  // STATE — one object, one render(). Actions only call useState;
-  // nothing outside render() touches the DOM directly.
-  // ============================================
-  let state = {
-    token: localStorage.getItem('token') || null,
-    user: JSON.parse(localStorage.getItem('user') || 'null'),
-    activeTab: '',
-    pageInfo: '',
-    isMenuOpen: false,
-    data: {},               // fetched records, keyed by endpoint name
-    error: '',
-    fullSheet: { active: false, title: '', content: null }
-  };
+/* ---------- state ----------
+   One object, one render(). Every action ends by calling setState,
+   nothing else touches the DOM. */
+const API = '/api';
+const state = {
+  token: localStorage.getItem('token') || null,
+  user: JSON.parse(localStorage.getItem('user') || 'null'),
+  viewRole: null,          // frontend-only override — lets the real admin preview other roles
+  route: 'home',
+  menuOpen: false,
+  data: {},
+  error: null,
+  loading: false
+};
 
-  function useState(key, value) {
-    if (arguments.length === 1) return state[key];
-    state = typeof key === 'object' ? { ...state, ...key } : { ...state, [key]: value };
-    render();
-  }
+function setState(patch) { Object.assign(state, patch); render(); }
 
-  // ============================================
-  // API
-  // ============================================
-  const API = '/api';
-  async function api(path, opts = {}) {
-    const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
-    if (state.token) headers.Authorization = 'Bearer ' + state.token;
-    const res = await fetch(API + path, { ...opts, headers });
-    let body = {};
-    try { body = await res.json(); } catch (_) { /* no body */ }
-    if (!res.ok) throw new Error(body.error || 'Request failed');
-    return body;
-  }
+// The role that actually gates what's rendered — real role, unless the
+// logged-in admin has switched the view for themselves.
+function effectiveRole() {
+  if (state.user?.role === 'Admin' && state.viewRole) return state.viewRole;
+  return state.user?.role || null;
+}
 
-  function loginSuccess(token, user) {
-    localStorage.setItem('token', token);
-    localStorage.setItem('user', JSON.stringify(user));
-    useState({ token, user, activeTab: 'home', error: '' });
-  }
-  function logout() {
-    localStorage.removeItem('token'); localStorage.removeItem('user');
-    useState({ token: null, user: null, activeTab: 'home', data: {} });
-  }
+async function api(path, opts = {}) {
+  const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
+  if (state.token) headers.Authorization = 'Bearer ' + state.token;
+  const res = await fetch(API + path, { ...opts, headers });
+  let body = {};
+  try { body = await res.json(); } catch (_) {}
+  if (!res.ok) throw new Error(body.error || 'Request failed');
+  return body;
+}
 
-  // ============================================
-  // SECTIONS — each tab owns which endpoints feed it and how it renders.
-  // Content is built as an HTML string and piped into the iframe, same as codes[].html.
-  // ============================================
-  const SECTIONS = {
-    home:          { label: 'Home', icon: 'fa-house', auth: false, endpoints: [], build: buildHome },
-    login:         { label: 'Sign in', icon: 'fa-right-to-bracket', auth: false, endpoints: [], build: buildAuth, hidden: true },
-    help:          { label: 'Help', icon: 'fa-circle-question', auth: true, endpoints: ['faqs'], build: buildHelp },
-    tickets:       { label: 'Tickets', icon: 'fa-ticket', auth: true, roles: ['Staff', 'Admin'], endpoints: ['tickets'], build: buildTickets },
-    bookings:      { label: 'Bookings', icon: 'fa-calendar-check', auth: true, roles: ['Staff', 'Admin'], endpoints: ['bookings', 'items'], build: buildBookings },
-    equipment:     { label: 'Equipment & Rooms', icon: 'fa-boxes-stacked', auth: true, roles: ['Staff', 'Admin'], endpoints: ['items'], build: buildEquipment },
-    announcements: { label: 'Announcements', icon: 'fa-bullhorn', auth: true, roles: ['Staff', 'Admin'], endpoints: ['announcements'], build: buildAnnouncements },
-    admin:         { label: 'Admin', icon: 'fa-user-shield', auth: true, roles: ['Admin'], endpoints: ['users', 'stats'], build: buildAdmin }
-  };
-  const ENDPOINT_PATH = {
-    faqs: '/faqs', tickets: '/tickets', bookings: '/bookings', items: '/items',
-    announcements: '/announcements', notifications: '/notifications', users: '/admin/users', stats: '/admin/stats'
-  };
+function loginSuccess(token, user) {
+  localStorage.setItem('token', token);
+  localStorage.setItem('user', JSON.stringify(user));
+  setState({ token, user, route: 'home', error: null });
+  loadRoute('home');
+}
+function logout() {
+  localStorage.removeItem('token'); localStorage.removeItem('user');
+  setState({ token: null, user: null, viewRole: null, route: 'home', data: {} });
+}
 
-  function visibleTabs() {
-    return Object.entries(SECTIONS).filter(([id, s]) => {
-      if (s.hidden) return false;
-      if (id === 'help') return true;
-      if (id === 'home') return true;
-      if (!state.user) return false;
-      if (s.roles && !s.roles.includes(state.user.role)) return false;
-      return true;
-    });
-  }
+/* ---------- routing ---------- */
+const ROUTES = {
+  home: { endpoints: ['tickets', 'faqs'] },
+  tickets: { endpoints: ['tickets'] },
+  bookings: { endpoints: ['bookings', 'items'] },
+  equipment: { endpoints: ['items'] },
+  faqs: { endpoints: ['faqs'] },
+  announcements: { endpoints: ['announcements'] },
+  notifications: { endpoints: ['notifications'] },
+  admin: { endpoints: ['users', 'stats'] },
+  profile: { endpoints: [] }
+};
+const ENDPOINT_PATH = {
+  tickets: '/tickets', bookings: '/bookings', items: '/items', faqs: '/faqs',
+  announcements: '/announcements', notifications: '/notifications', users: '/admin/users', stats: '/admin/stats'
+};
 
-  // ============================================
-  // LOAD — fetch only what the active tab needs, then hand off to its builder
-  // ============================================
-  async function loadTab(id, force = false) {
-    const section = SECTIONS[id];
-    if (!section) return;
-    if (section.auth && !state.user) id = 'login';
-    const active = SECTIONS[id];
+async function loadRoute(name) {
+  const def = ROUTES[name];
+  if (!def || !state.user) return;
+  state.loading = true; render();
+  try {
+    const results = await Promise.all(def.endpoints.map(k => api(ENDPOINT_PATH[k])));
+    def.endpoints.forEach((k, i) => { state.data[k] = results[i]; });
+    state.error = null;
+  } catch (e) { state.error = e.message; }
+  state.loading = false;
+  render();
+}
+function go(route) { setState({ route, menuOpen: false }); loadRoute(route); }
 
-    useState({ activeTab: id, pageInfo: 'Loading…', isMenuOpen: false, error: '' });
+/* ---------- icons (outline, 1.5px stroke, no fill) ---------- */
+const ICONS = {
+  home: `<path d="M4 11.5 12 4l8 7.5"/><path d="M6 10v9a1 1 0 0 0 1 1h3v-6h4v6h3a1 1 0 0 0 1-1v-9"/>`,
+  ticket: `<path d="M3 9a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v1.5a1.5 1.5 0 0 0 0 3V15a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-1.5a1.5 1.5 0 0 0 0-3z"/><path d="M9 7v10" stroke-dasharray="2 2"/>`,
+  booking: `<rect x="3.5" y="5" width="17" height="16" rx="2"/><path d="M3.5 10h17M8 3v4M16 3v4"/>`,
+  equipment: `<rect x="3" y="4" width="18" height="12" rx="1.5"/><path d="M8 20h8M12 16v4"/>`,
+  faq: `<circle cx="12" cy="12" r="9"/><path d="M9.5 9.3a2.5 2.5 0 1 1 3.6 2.2c-.8.5-1.1.9-1.1 1.8"/><circle cx="12" cy="16.5" r=".4" fill="currentColor" stroke="none"/>`,
+  announcement: `<path d="M4 10v4a1 1 0 0 0 1 1h2l7 4V5L7 9H5a1 1 0 0 0-1 1z"/><path d="M17 9.5a3 3 0 0 1 0 5"/>`,
+  admin: `<path d="M12 3l7 3v5c0 4.5-2.9 7.9-7 10-4.1-2.1-7-5.5-7-10V6z"/>`,
+  bell: `<path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/>`,
+  menu: `<path d="M4 7h16M4 12h16M4 17h16"/>`,
+  close: `<path d="M6 6l12 12M18 6L6 18"/>`,
+  chevron: `<path d="M9 6l6 6-6 6"/>`,
+  plus: `<path d="M12 5v14M5 12h14"/>`
+};
+function icon(name, cls = 'w-5 h-5') {
+  return `<svg class="${cls}" viewBox="0 0 24 24" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${ICONS[name] || ''}</svg>`;
+}
 
-    try {
-      if (active.endpoints.length) {
-        const results = await Promise.all(active.endpoints.map(k =>
-          force || !state.data[k] ? api(ENDPOINT_PATH[k]) : Promise.resolve(state.data[k])
-        ));
-        active.endpoints.forEach((k, i) => { state.data[k] = results[i]; });
-      }
-      applyFrame('mainFrame', active.build());
-      useState('pageInfo', 'Ready');
-    } catch (err) {
-      applyFrame('mainFrame', `<div style="padding:2rem;font-family:system-ui;color:#ef4444">${err.message}</div>`);
-      useState('pageInfo', 'Error');
-    }
-  }
+function esc(s) { const d = document.createElement('div'); d.textContent = s ?? ''; return d.innerHTML; }
+function fmtDate(d) { const dt = new Date(d); return dt.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' · ' + dt.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }); }
+const STATUS_COLOR = {
+  Pending: 'bg-amber-50 text-amber-700', Maintenance: 'bg-amber-50 text-amber-700',
+  Assigned: 'bg-blue-50 text-blue-700', 'In Progress': 'bg-blue-50 text-blue-700',
+  Resolved: 'bg-emerald-50 text-emerald-700', Approved: 'bg-emerald-50 text-emerald-700', Available: 'bg-emerald-50 text-emerald-700',
+  Closed: 'bg-gray-100 text-gray-600', Cancelled: 'bg-gray-100 text-gray-600', Retired: 'bg-gray-100 text-gray-600',
+  Rejected: 'bg-red-50 text-red-700'
+};
+function pill(status) { return `<span class="text-[11px] font-semibold px-2.5 py-1 rounded-full ${STATUS_COLOR[status] || 'bg-gray-100 text-gray-600'}">${status}</span>`; }
 
-  function refreshActive() { if (state.activeTab) loadTab(state.activeTab, true); }
+/* ---------- sidebar ---------- */
+function navItems() {
+  const role = effectiveRole();
+  const items = [['home', 'Home', 'home'], ['tickets', 'Tickets', 'ticket'], ['bookings', 'Bookings', 'booking'], ['equipment', 'Equipment', 'equipment'], ['faqs', 'FAQs', 'faq']];
+  if (role !== 'User') items.push(['announcements', 'Announcements', 'announcement']);
+  if (role === 'Admin') items.push(['admin', 'Admin', 'admin']);
+  return items;
+}
 
-  // ============================================
-  // FRAME CONTENT — srcdoc only; each section is self-contained HTML with
-  // inline styles, since Tailwind classes don't cross the iframe boundary.
-  // ============================================
-  function esc(s) { const d = document.createElement('div'); d.textContent = s ?? ''; return d.innerHTML; }
-  function fmtDate(d) { const dt = new Date(d); return dt.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' ' + dt.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }); }
-  const STATUS_COLOR = {
-    Pending: '#b45309', Maintenance: '#b45309', Assigned: '#1d4ed8', 'In Progress': '#1d4ed8',
-    Resolved: '#15803d', Approved: '#15803d', Available: '#15803d',
-    Closed: '#64748b', Cancelled: '#64748b', Retired: '#64748b', Rejected: '#b91c1c'
-  };
-  function pill(status) {
-    const c = STATUS_COLOR[status] || '#64748b';
-    return `<span style="font-size:11px;font-weight:600;letter-spacing:.02em;padding:2px 10px;border-radius:999px;background:${c}1a;color:${c}">${status}</span>`;
-  }
-  function frameShell(inner) {
-    return `<div style="font-family:system-ui,sans-serif;padding:24px;color:#1e293b;max-width:760px;margin:0 auto">${inner}</div>`;
-  }
-
-  function buildHome() {
-    const faqs = state.data.faqs || [];
-    return frameShell(`
-      <p style="font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:#b45309;font-weight:700;margin-bottom:8px">ICT Service Management</p>
-      <h1 style="font-size:30px;margin:0 0 12px">One desk for every request, booking, and ticket.</h1>
-      <p style="color:#64748b;line-height:1.6;margin-bottom:24px">Submit ICT support requests, reserve rooms and equipment, and track status end to end.</p>
-      ${!state.user ? `<button onclick="parent.loadTab('login')" style="background:#1e293b;color:white;border:none;padding:10px 20px;border-radius:999px;font-weight:600;cursor:pointer">Sign in</button>` : ''}
-    `);
-  }
-
-  function buildAuth() {
-    if (state.error) {
-      // rendered after form submit failures; kept out of the shell's cache path
-    }
-    return frameShell(`
-      <div style="max-width:340px;margin:40px auto">
-        <h2 style="margin:0 0 4px">Welcome back</h2>
-        <p style="color:#64748b;font-size:14px;margin:0 0 20px">Sign in to your account</p>
-        ${state.error ? `<div style="background:#fef2f2;color:#b91c1c;font-size:13px;padding:8px 12px;border-radius:8px;margin-bottom:12px">${esc(state.error)}</div>` : ''}
-        <form onsubmit="parent.handleLogin(event)">
-          <input required name="email" type="email" placeholder="Email" style="width:100%;box-sizing:border-box;border:1px solid #e2e8f0;border-radius:8px;padding:10px 12px;font-size:14px;margin-bottom:8px">
-          <input required name="password" type="password" placeholder="Password" style="width:100%;box-sizing:border-box;border:1px solid #e2e8f0;border-radius:8px;padding:10px 12px;font-size:14px;margin-bottom:12px">
-          <button style="width:100%;background:#1e293b;color:white;border:none;padding:10px;border-radius:8px;font-weight:600;cursor:pointer">Sign in</button>
-        </form>
+function sidebar() {
+  const role = effectiveRole();
+  const isRealAdmin = state.user?.role === 'Admin';
+  return `
+  <aside id="sidebar" class="${state.menuOpen ? 'open' : ''} w-72 md:w-64 bg-white border-r border-gray-100 flex-shrink-0 flex flex-col h-full">
+    <div class="flex items-center justify-between px-5 h-16 border-b border-gray-100 md:hidden">
+      <span class="font-bold text-lg"><span class="text-gray-900">ICT</span> <span class="font-normal text-gray-500">Lookup</span></span>
+      <button onclick="setState({menuOpen:false})" class="p-2 -mr-2 text-gray-400">${icon('close')}</button>
+    </div>
+    <nav class="flex-1 overflow-y-auto px-3 py-4 space-y-1">
+      ${navItems().map(([id, label, ic]) => `
+        <button onclick="go('${id}')" class="nav-item ${state.route === id ? 'active' : ''} w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition">
+          ${icon(ic)}${label}
+        </button>`).join('')}
+    </nav>
+    ${isRealAdmin ? `
+    <div class="mx-3 mb-3 p-3 rounded-xl bg-gray-50 border border-gray-100">
+      <div class="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-2">View as</div>
+      <div class="flex gap-1">
+        ${['Admin', 'Staff', 'User'].map(r => `
+          <button onclick="setState({viewRole:'${r}'==='${state.user.role}'?null:'${r}'})"
+            class="flex-1 text-xs font-medium py-1.5 rounded-lg ${role === r ? 'bg-gray-900 text-white' : 'text-gray-500 hover:bg-gray-100'}">${r}</button>`).join('')}
       </div>
-    `);
-  }
+    </div>` : ''}
+    <button onclick="go('profile')" class="flex items-center gap-3 px-5 py-4 border-t border-gray-100 text-left">
+      <div class="w-9 h-9 rounded-full bg-gray-900 text-white flex items-center justify-center text-sm font-semibold flex-shrink-0">
+        ${state.user ? esc(state.user.name[0].toUpperCase()) : '?'}
+      </div>
+      <div class="min-w-0 flex-1">
+        <div class="text-sm font-medium truncate">${state.user ? esc(state.user.name) : 'Guest'}</div>
+        <div class="text-xs text-gray-400">${role || 'Signed out'}</div>
+      </div>
+      ${icon('chevron', 'w-4 h-4 text-gray-300')}
+    </button>
+  </aside>
+  ${state.menuOpen ? `<div onclick="setState({menuOpen:false})" class="fixed inset-0 bg-black/30 z-40 md:hidden"></div>` : ''}`;
+}
 
-  function buildHelp() {
-    const isAdmin = state.user?.role === 'Admin';
-    const faqs = state.data.faqs || [];
-    return frameShell(`
-      ${isAdmin ? `
-      <div style="border:1px solid #e2e8f0;border-radius:12px;padding:16px;margin-bottom:20px">
-        <h3 style="margin:0 0 10px">Add FAQ</h3>
-        <form onsubmit="parent.handleForm(event,'faqs','help')">
-          <input required name="question" placeholder="Question" style="width:100%;box-sizing:border-box;border:1px solid #e2e8f0;border-radius:8px;padding:8px 10px;font-size:13px;margin-bottom:6px">
-          <textarea required name="answer" placeholder="Answer" rows="2" style="width:100%;box-sizing:border-box;border:1px solid #e2e8f0;border-radius:8px;padding:8px 10px;font-size:13px;margin-bottom:6px"></textarea>
-          <button style="background:#1e293b;color:white;border:none;padding:8px 16px;border-radius:8px;font-size:13px;cursor:pointer">Publish</button>
-        </form>
-      </div>` : ''}
-      <h3 style="margin:0 0 12px">Frequently asked</h3>
+/* ---------- header ---------- */
+function topbar() {
+  const unread = (state.data.notifications || []).some(n => !n.is_read);
+  return `
+  <header class="h-16 flex items-center justify-between px-4 md:px-6 border-b border-gray-100 flex-shrink-0">
+    <div class="flex items-center gap-3">
+      <button onclick="setState({menuOpen:true})" class="md:hidden p-2 -ml-2 text-gray-700">${icon('menu')}</button>
+      <span class="font-bold text-lg md:hidden"><span class="text-gray-900">ICT</span> <span class="font-normal text-gray-400">Lookup</span></span>
+    </div>
+    <button onclick="go('notifications')" class="relative p-2 rounded-full hover:bg-gray-50 text-gray-500">
+      ${icon('bell')}
+      ${unread ? `<span class="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-red-500"></span>` : ''}
+    </button>
+  </header>`;
+}
+
+/* ---------- views ---------- */
+
+function homeView() {
+  const role = effectiveRole();
+  const tickets = (state.data.tickets || []).slice(0, 4);
+  const cards = [
+    ['ticket', 'Ticket', "openCreate('ticket')"],
+    ['booking', 'Booking', "openCreate('booking')"],
+    ['faq', 'FAQ', role === 'Admin' ? "openCreate('faq')" : "go('faqs')"]
+  ];
+
+  return `
+  <div class="px-4 md:px-6 py-6 max-w-2xl mx-auto">
+    <div class="bg-gradient-to-br from-red-500 to-red-600 rounded-3xl px-6 py-8 text-center text-white mb-8">
+      <h1 class="text-2xl font-extrabold tracking-tight mb-1">SEAMLESS SUPPORT SERVICE</h1>
+      <p class="text-sm text-red-100">Open a ticket and now</p>
+    </div>
+
+    <h2 class="text-lg font-bold mb-3">Create</h2>
+    <div class="grid grid-cols-3 gap-3 mb-8">
+      ${cards.map(([ic, label, action]) => `
+        <button onclick="${action}" class="aspect-square border border-gray-200 rounded-2xl flex flex-col items-center justify-center gap-2 hover:border-gray-900 hover:bg-gray-50 transition">
+          ${icon(ic, 'w-6 h-6 text-gray-700')}
+          <span class="text-xs font-medium text-gray-600">${label}</span>
+        </button>`).join('')}
+    </div>
+
+    <h2 class="text-lg font-bold mb-3">Support Tickets</h2>
+    <div class="space-y-3">
+      ${tickets.length ? tickets.map(ticketRow).join('') : emptyRow('No tickets yet')}
+    </div>
+  </div>`;
+}
+
+function emptyRow(msg) { return `<div class="border border-gray-100 rounded-2xl px-4 py-8 text-center text-sm text-gray-400">${msg}</div>`; }
+
+function ticketRow(t) {
+  return `
+  <div class="border border-gray-100 rounded-2xl px-4 py-3.5">
+    <div class="flex justify-between items-start gap-2 mb-1">
+      <div class="font-medium text-sm">${esc(t.category)}</div>
+      ${pill(t.status)}
+    </div>
+    <p class="text-sm text-gray-500 line-clamp-1">${esc(t.description)}</p>
+  </div>`;
+}
+
+function ticketsView() {
+  const role = effectiveRole();
+  const tickets = state.data.tickets || [];
+  const nextMap = { Pending: 'Assigned', Assigned: 'In Progress', 'In Progress': 'Resolved', Resolved: 'Closed' };
+  return `
+  <div class="px-4 md:px-6 py-6 max-w-2xl mx-auto">
+    <div class="flex items-center justify-between mb-5">
+      <h1 class="text-xl font-bold">Tickets</h1>
+      <button onclick="openCreate('ticket')" class="flex items-center gap-1.5 bg-gray-900 text-white text-sm font-medium px-3.5 py-2 rounded-xl">${icon('plus', 'w-4 h-4')}New</button>
+    </div>
+    <div class="space-y-3">
+      ${tickets.length ? tickets.map(t => `
+        <div class="border border-gray-100 rounded-2xl px-4 py-4">
+          <div class="flex justify-between items-start gap-2 mb-1">
+            <div class="font-medium text-sm">${esc(t.category)}</div>${pill(t.status)}
+          </div>
+          <p class="text-sm text-gray-500 mb-2">${esc(t.description)}</p>
+          <div class="text-xs text-gray-400 mb-3">#${t.id} · ${t.priority} priority${t.assignee_name ? ' · ' + esc(t.assignee_name) : ''}</div>
+          ${role !== 'User' ? `<div class="flex gap-2">
+            ${t.status === 'Pending' ? `<button onclick="ticketAction(${t.id},'assign')" class="text-xs border border-gray-200 rounded-full px-3 py-1.5 font-medium">Assign to me</button>` : ''}
+            ${nextMap[t.status] ? `<button onclick="ticketAction(${t.id},'status','${nextMap[t.status]}')" class="text-xs bg-emerald-600 text-white rounded-full px-3 py-1.5 font-medium">Move to ${nextMap[t.status]}</button>` : ''}
+          </div>` : ''}
+        </div>`).join('') : emptyRow('No tickets yet')}
+    </div>
+  </div>`;
+}
+async function ticketAction(id, kind, status) {
+  try {
+    if (kind === 'assign') await api(`/tickets/${id}/assign`, { method: 'PATCH', body: JSON.stringify({ assigned_to: state.user.id }) });
+    else await api(`/tickets/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) });
+    await loadRoute('tickets');
+  } catch (e) { setState({ error: e.message }); }
+}
+
+function bookingsView() {
+  const role = effectiveRole();
+  const bookings = state.data.bookings || [];
+  return `
+  <div class="px-4 md:px-6 py-6 max-w-2xl mx-auto">
+    <div class="flex items-center justify-between mb-5">
+      <h1 class="text-xl font-bold">Bookings</h1>
+      <button onclick="openCreate('booking')" class="flex items-center gap-1.5 bg-gray-900 text-white text-sm font-medium px-3.5 py-2 rounded-xl">${icon('plus', 'w-4 h-4')}New</button>
+    </div>
+    <div class="space-y-3">
+      ${bookings.length ? bookings.map(b => `
+        <div class="border border-gray-100 rounded-2xl px-4 py-4">
+          <div class="flex justify-between items-start gap-2 mb-1">
+            <div class="font-medium text-sm">${esc(b.item_name || 'Item #' + b.item_id)}</div>${pill(b.status)}
+          </div>
+          <div class="text-xs text-gray-400 mb-3">${fmtDate(b.start_time)} → ${fmtDate(b.end_time)}</div>
+          <div class="flex gap-2">
+            ${role !== 'User' && b.status === 'Pending' ? `
+              <button onclick="bookingAction(${b.id},'approve')" class="text-xs bg-emerald-600 text-white rounded-full px-3 py-1.5 font-medium">Approve</button>
+              <button onclick="bookingAction(${b.id},'reject')" class="text-xs border border-red-200 text-red-600 rounded-full px-3 py-1.5 font-medium">Reject</button>` : ''}
+            ${['Pending', 'Approved'].includes(b.status) ? `<button onclick="bookingAction(${b.id},'cancel')" class="text-xs text-gray-400 underline">Cancel</button>` : ''}
+          </div>
+        </div>`).join('') : emptyRow('No bookings yet')}
+    </div>
+  </div>`;
+}
+async function bookingAction(id, action) {
+  try { await api(`/bookings/${id}/${action}`, { method: 'PATCH' }); await loadRoute('bookings'); }
+  catch (e) { setState({ error: e.message }); }
+}
+
+function equipmentView() {
+  const role = effectiveRole();
+  const items = state.data.items || [];
+  return `
+  <div class="px-4 md:px-6 py-6 max-w-2xl mx-auto">
+    <div class="flex items-center justify-between mb-5">
+      <h1 class="text-xl font-bold">Equipment & Rooms</h1>
+      ${role === 'Admin' ? `<button onclick="openCreate('item')" class="flex items-center gap-1.5 bg-gray-900 text-white text-sm font-medium px-3.5 py-2 rounded-xl">${icon('plus', 'w-4 h-4')}Add</button>` : ''}
+    </div>
+    <div class="grid grid-cols-2 gap-3">
+      ${items.length ? items.map(i => `
+        <div class="border border-gray-100 rounded-2xl p-4">
+          <div class="font-medium text-sm mb-0.5">${esc(i.name)}</div>
+          <div class="text-xs text-gray-400 mb-3">${i.type}</div>
+          ${role === 'Admin' ? `
+          <select onchange="itemStatus(${i.id},this.value)" class="text-xs border border-gray-200 rounded-full px-2 py-1">
+            ${['Available', 'Maintenance', 'Retired'].map(s => `<option ${s === i.status ? 'selected' : ''}>${s}</option>`).join('')}
+          </select>` : pill(i.status)}
+        </div>`).join('') : `<div class="col-span-2">${emptyRow('No items yet')}</div>`}
+    </div>
+  </div>`;
+}
+async function itemStatus(id, status) {
+  try { await api(`/items/${id}`, { method: 'PATCH', body: JSON.stringify({ status }) }); await loadRoute('equipment'); }
+  catch (e) { setState({ error: e.message }); }
+}
+
+function faqsView() {
+  const role = effectiveRole();
+  const faqs = state.data.faqs || [];
+  return `
+  <div class="px-4 md:px-6 py-6 max-w-2xl mx-auto">
+    <div class="flex items-center justify-between mb-5">
+      <h1 class="text-xl font-bold">FAQs</h1>
+      ${role === 'Admin' ? `<button onclick="openCreate('faq')" class="flex items-center gap-1.5 bg-gray-900 text-white text-sm font-medium px-3.5 py-2 rounded-xl">${icon('plus', 'w-4 h-4')}Add</button>` : ''}
+    </div>
+    <div class="space-y-3">
       ${faqs.length ? faqs.map(f => `
-        <div style="border-bottom:1px solid #f1f5f9;padding:10px 0">
-          <div style="font-weight:600;font-size:14px">${esc(f.question)}</div>
-          <div style="color:#64748b;font-size:14px;margin-top:4px">${esc(f.answer)}</div>
-          ${isAdmin ? `<button onclick="parent.deleteRecord('faqs',${f.id},'help')" style="border:none;background:none;color:#b91c1c;font-size:12px;cursor:pointer;margin-top:4px;text-decoration:underline">Delete</button>` : ''}
-        </div>`).join('') : `<p style="color:#94a3b8;font-size:14px">No FAQs yet.</p>`}
-    `);
-  }
+        <div class="border border-gray-100 rounded-2xl px-4 py-4">
+          <div class="font-medium text-sm mb-1">${esc(f.question)}</div>
+          <p class="text-sm text-gray-500">${esc(f.answer)}</p>
+          ${role === 'Admin' ? `<button onclick="deleteRecord('faqs',${f.id},'faqs')" class="text-xs text-red-500 underline mt-2">Delete</button>` : ''}
+        </div>`).join('') : emptyRow('No FAQs yet')}
+    </div>
+  </div>`;
+}
 
-  function buildTickets() {
-    const tickets = state.data.tickets || [];
-    const nextMap = { Pending: 'Assigned', Assigned: 'In Progress', 'In Progress': 'Resolved', Resolved: 'Closed' };
-    return frameShell(`
-      <div style="border:1px solid #e2e8f0;border-radius:12px;padding:16px;margin-bottom:20px">
-        <h3 style="margin:0 0 10px">New support request</h3>
-        <form onsubmit="parent.handleForm(event,'tickets','tickets')">
-          <input required name="category" placeholder="Category" style="width:100%;box-sizing:border-box;border:1px solid #e2e8f0;border-radius:8px;padding:8px 10px;font-size:13px;margin-bottom:6px">
-          <textarea required name="description" placeholder="Describe the issue" rows="2" style="width:100%;box-sizing:border-box;border:1px solid #e2e8f0;border-radius:8px;padding:8px 10px;font-size:13px;margin-bottom:6px"></textarea>
-          <select name="priority" style="width:100%;box-sizing:border-box;border:1px solid #e2e8f0;border-radius:8px;padding:8px 10px;font-size:13px;margin-bottom:6px">
-            <option value="Normal">Normal</option><option value="Low">Low</option><option value="High">High</option><option value="Urgent">Urgent</option>
-          </select>
-          <button style="background:#1e293b;color:white;border:none;padding:8px 16px;border-radius:8px;font-size:13px;cursor:pointer">Submit</button>
-        </form>
-      </div>
-      ${tickets.map(t => `
-        <div style="border:1px solid #e2e8f0;border-radius:12px;padding:14px;margin-bottom:10px">
-          <div style="display:flex;justify-content:space-between;align-items:start">
-            <div style="font-weight:600;font-size:14px">${esc(t.category)}</div>${pill(t.status)}
-          </div>
-          <p style="color:#64748b;font-size:13px;margin:6px 0">${esc(t.description)}</p>
-          <div style="font-size:12px;color:#94a3b8;margin-bottom:8px">#${t.id} · ${t.priority} priority${t.assignee_name ? ' · assigned to ' + esc(t.assignee_name) : ''}</div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap">
-            ${t.status === 'Pending' ? `<button onclick="parent.ticketAction(${t.id},'assign')" style="border:1px solid #cbd5e1;background:none;border-radius:999px;padding:4px 12px;font-size:12px;cursor:pointer">Assign to me</button>` : ''}
-            ${nextMap[t.status] ? `<button onclick="parent.ticketAction(${t.id},'status','${nextMap[t.status]}')" style="border:none;background:#15803d;color:white;border-radius:999px;padding:4px 12px;font-size:12px;cursor:pointer">Move to ${nextMap[t.status]}</button>` : ''}
-          </div>
-        </div>`).join('') || `<p style="color:#94a3b8;font-size:14px">No requests yet.</p>`}
-    `);
-  }
+function announcementsView() {
+  const role = effectiveRole();
+  const list = state.data.announcements || [];
+  return `
+  <div class="px-4 md:px-6 py-6 max-w-2xl mx-auto">
+    <div class="flex items-center justify-between mb-5">
+      <h1 class="text-xl font-bold">Announcements</h1>
+      ${role === 'Admin' ? `<button onclick="openCreate('announcement')" class="flex items-center gap-1.5 bg-gray-900 text-white text-sm font-medium px-3.5 py-2 rounded-xl">${icon('plus', 'w-4 h-4')}New</button>` : ''}
+    </div>
+    <div class="space-y-3">
+      ${list.length ? list.map(a => `
+        <div class="border border-gray-100 rounded-2xl px-4 py-4">
+          <div class="font-medium text-sm mb-1">${esc(a.title)}</div>
+          <p class="text-sm text-gray-500 mb-1">${esc(a.body)}</p>
+          <div class="text-xs text-gray-400">${fmtDate(a.created_at)}</div>
+        </div>`).join('') : emptyRow('No announcements yet')}
+    </div>
+  </div>`;
+}
 
-  function buildBookings() {
-    const bookings = state.data.bookings || [];
-    const items = (state.data.items || []).filter(i => i.status === 'Available');
-    return frameShell(`
-      <div style="border:1px solid #e2e8f0;border-radius:12px;padding:16px;margin-bottom:20px">
-        <h3 style="margin:0 0 10px">Book equipment or a room</h3>
-        <form onsubmit="parent.handleBooking(event)">
-          <select required name="item_id" style="width:100%;box-sizing:border-box;border:1px solid #e2e8f0;border-radius:8px;padding:8px 10px;font-size:13px;margin-bottom:6px">
-            <option value="">Select item…</option>
-            ${items.map(i => `<option value="${i.id}">${esc(i.name)} (${i.type})</option>`).join('')}
-          </select>
-          <div style="display:flex;gap:8px;margin-bottom:6px">
-            <input required name="start_time" type="datetime-local" style="flex:1;box-sizing:border-box;border:1px solid #e2e8f0;border-radius:8px;padding:8px 10px;font-size:13px">
-            <input required name="end_time" type="datetime-local" style="flex:1;box-sizing:border-box;border:1px solid #e2e8f0;border-radius:8px;padding:8px 10px;font-size:13px">
-          </div>
-          <button style="background:#1e293b;color:white;border:none;padding:8px 16px;border-radius:8px;font-size:13px;cursor:pointer">Request</button>
-        </form>
-      </div>
-      ${bookings.map(b => `
-        <div style="border:1px solid #e2e8f0;border-radius:12px;padding:14px;margin-bottom:10px">
-          <div style="display:flex;justify-content:space-between;align-items:start">
-            <div style="font-weight:600;font-size:14px">${esc(b.item_name || 'Item #' + b.item_id)}</div>${pill(b.status)}
-          </div>
-          <div style="font-size:12px;color:#94a3b8;margin:6px 0">${fmtDate(b.start_time)} → ${fmtDate(b.end_time)}</div>
-          <div style="display:flex;gap:8px">
-            ${b.status === 'Pending' ? `
-              <button onclick="parent.bookingAction(${b.id},'approve')" style="border:none;background:#15803d;color:white;border-radius:999px;padding:4px 12px;font-size:12px;cursor:pointer">Approve</button>
-              <button onclick="parent.bookingAction(${b.id},'reject')" style="border:1px solid #b91c1c;color:#b91c1c;background:none;border-radius:999px;padding:4px 12px;font-size:12px;cursor:pointer">Reject</button>` : ''}
-            ${['Pending', 'Approved'].includes(b.status) ? `<button onclick="parent.bookingAction(${b.id},'cancel')" style="border:none;background:none;color:#94a3b8;font-size:12px;cursor:pointer;text-decoration:underline">Cancel</button>` : ''}
-          </div>
-        </div>`).join('') || `<p style="color:#94a3b8;font-size:14px">No bookings yet.</p>`}
-    `);
-  }
+function notificationsView() {
+  const list = state.data.notifications || [];
+  return `
+  <div class="px-4 md:px-6 py-6 max-w-2xl mx-auto">
+    <h1 class="text-xl font-bold mb-5">Notifications</h1>
+    <div class="space-y-2">
+      ${list.length ? list.map(n => `
+        <div class="border border-gray-100 rounded-2xl px-4 py-3.5 flex justify-between items-center gap-3 ${n.is_read ? 'opacity-50' : ''}">
+          <span class="text-sm">${esc(n.message)}</span>
+          ${!n.is_read ? `<button onclick="markRead(${n.id})" class="text-xs text-red-600 underline whitespace-nowrap flex-shrink-0">Mark read</button>` : ''}
+        </div>`).join('') : emptyRow('No notifications yet')}
+    </div>
+  </div>`;
+}
+async function markRead(id) { try { await api(`/notifications/${id}/read`, { method: 'PATCH' }); await loadRoute('notifications'); } catch (_) {} }
 
-  function buildEquipment() {
-    const isAdmin = state.user?.role === 'Admin';
-    const items = state.data.items || [];
-    return frameShell(`
-      ${isAdmin ? `
-      <div style="border:1px solid #e2e8f0;border-radius:12px;padding:16px;margin-bottom:20px">
-        <h3 style="margin:0 0 10px">Add item</h3>
-        <form onsubmit="parent.handleForm(event,'items','equipment')">
-          <input required name="name" placeholder="Name" style="width:100%;box-sizing:border-box;border:1px solid #e2e8f0;border-radius:8px;padding:8px 10px;font-size:13px;margin-bottom:6px">
-          <select required name="type" style="width:100%;box-sizing:border-box;border:1px solid #e2e8f0;border-radius:8px;padding:8px 10px;font-size:13px;margin-bottom:6px">
-            <option value="Equipment">Equipment</option><option value="Room">Room</option>
-          </select>
-          <button style="background:#1e293b;color:white;border:none;padding:8px 16px;border-radius:8px;font-size:13px;cursor:pointer">Add</button>
-        </form>
-      </div>` : ''}
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-        ${items.map(i => `
-          <div style="border:1px solid #e2e8f0;border-radius:12px;padding:12px">
-            <div style="display:flex;justify-content:space-between"><div style="font-weight:600;font-size:14px">${esc(i.name)}</div><span style="font-size:11px;color:#94a3b8">${i.type}</span></div>
-            <div style="margin-top:8px">${isAdmin ? `
-              <select onchange="parent.itemStatus(${i.id},this.value)" style="font-size:12px;border:1px solid #e2e8f0;border-radius:999px;padding:2px 8px">
-                ${['Available', 'Maintenance', 'Retired'].map(s => `<option ${s === i.status ? 'selected' : ''}>${s}</option>`).join('')}
-              </select>` : pill(i.status)}</div>
-          </div>`).join('') || `<p style="color:#94a3b8;font-size:14px">No items yet.</p>`}
-      </div>
-    `);
-  }
-
-  function buildAnnouncements() {
-    const isAdmin = state.user?.role === 'Admin';
-    const list = state.data.announcements || [];
-    return frameShell(`
-      ${isAdmin ? `
-      <div style="border:1px solid #e2e8f0;border-radius:12px;padding:16px;margin-bottom:20px">
-        <h3 style="margin:0 0 10px">Publish announcement</h3>
-        <form onsubmit="parent.handleForm(event,'announcements','announcements')">
-          <input required name="title" placeholder="Title" style="width:100%;box-sizing:border-box;border:1px solid #e2e8f0;border-radius:8px;padding:8px 10px;font-size:13px;margin-bottom:6px">
-          <textarea required name="body" placeholder="Message" rows="2" style="width:100%;box-sizing:border-box;border:1px solid #e2e8f0;border-radius:8px;padding:8px 10px;font-size:13px;margin-bottom:6px"></textarea>
-          <button style="background:#1e293b;color:white;border:none;padding:8px 16px;border-radius:8px;font-size:13px;cursor:pointer">Publish</button>
-        </form>
-      </div>` : ''}
-      ${list.map(a => `
-        <div style="border:1px solid #e2e8f0;border-radius:12px;padding:14px;margin-bottom:10px">
-          <div style="font-weight:600;font-size:14px">${esc(a.title)}</div>
-          <p style="color:#64748b;font-size:13px;margin:4px 0">${esc(a.body)}</p>
-          <div style="font-size:11px;color:#94a3b8">${fmtDate(a.created_at)}</div>
-        </div>`).join('') || `<p style="color:#94a3b8;font-size:14px">No announcements yet.</p>`}
-    `);
-  }
-
-  function buildAdmin() {
-    const s = state.data.stats || {};
-    const users = state.data.users || [];
-    return frameShell(`
-      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:20px">
-        ${[['total_users', 'Users'], ['total_tickets', 'Tickets'], ['total_bookings', 'Bookings']].map(([k, label]) => `
-        <div style="border:1px solid #e2e8f0;border-radius:12px;padding:14px;text-align:center">
-          <div style="font-size:22px;font-weight:700">${s[k] ?? '—'}</div><div style="font-size:11px;color:#94a3b8">${label}</div>
+function adminView() {
+  const role = effectiveRole();
+  if (role !== 'Admin') return `<div class="px-4 md:px-6 py-16 text-center text-sm text-gray-400">Admin access required.</div>`;
+  const s = state.data.stats || {};
+  const users = state.data.users || [];
+  return `
+  <div class="px-4 md:px-6 py-6 max-w-2xl mx-auto">
+    <h1 class="text-xl font-bold mb-5">Admin</h1>
+    <div class="grid grid-cols-3 gap-3 mb-8">
+      ${[['total_users', 'Users'], ['total_tickets', 'Tickets'], ['total_bookings', 'Bookings']].map(([k, label]) => `
+        <div class="border border-gray-100 rounded-2xl py-4 text-center">
+          <div class="text-2xl font-bold">${s[k] ?? '—'}</div><div class="text-xs text-gray-400">${label}</div>
         </div>`).join('')}
-      </div>
-      <h3 style="margin:0 0 10px">Users</h3>
+    </div>
+    <h2 class="text-sm font-bold text-gray-400 uppercase tracking-wide mb-3">Users</h2>
+    <div class="space-y-2">
       ${users.map(u => `
-        <div style="display:flex;justify-content:space-between;align-items:center;border:1px solid #e2e8f0;border-radius:10px;padding:10px 12px;margin-bottom:6px">
-          <div><div style="font-weight:600;font-size:13px">${esc(u.name)}</div><div style="font-size:11px;color:#94a3b8">${esc(u.email)}</div></div>
-          <select onchange="parent.userRole(${u.id},this.value)" style="font-size:12px;border:1px solid #e2e8f0;border-radius:999px;padding:2px 8px">
+        <div class="flex items-center justify-between border border-gray-100 rounded-2xl px-4 py-3">
+          <div><div class="text-sm font-medium">${esc(u.name)}</div><div class="text-xs text-gray-400">${esc(u.email)}</div></div>
+          <select onchange="changeRole(${u.id},this.value)" class="text-xs border border-gray-200 rounded-full px-2 py-1">
             ${['User', 'Staff', 'Admin'].map(r => `<option ${r === u.role ? 'selected' : ''}>${r}</option>`).join('')}
           </select>
         </div>`).join('')}
-    `);
+    </div>
+  </div>`;
+}
+async function changeRole(id, role) {
+  try { await api(`/admin/users/${id}/role`, { method: 'PATCH', body: JSON.stringify({ role }) }); await loadRoute('admin'); }
+  catch (e) { setState({ error: e.message }); }
+}
+
+function profileView() {
+  const u = state.user;
+  return `
+  <div class="px-4 md:px-6 py-6 max-w-md mx-auto text-center">
+    <div class="w-20 h-20 rounded-full bg-gray-900 text-white flex items-center justify-center text-2xl font-semibold mx-auto mb-4">
+      ${esc(u.name[0].toUpperCase())}
+    </div>
+    <h1 class="text-lg font-bold">${esc(u.name)}</h1>
+    <p class="text-sm text-gray-400 mb-6">${esc(u.email)} · ${u.role}</p>
+    <button onclick="logout()" class="text-sm font-medium text-red-600 border border-red-200 rounded-xl px-5 py-2.5">Sign out</button>
+  </div>`;
+}
+
+function authView() {
+  return `
+  <div class="min-h-screen flex items-center justify-center px-5">
+    <div class="w-full max-w-sm">
+      <div class="text-center mb-8">
+        <span class="font-bold text-xl"><span class="text-gray-900">ICT</span> <span class="font-normal text-gray-400">Lookup</span></span>
+      </div>
+      ${state.error ? `<div class="bg-red-50 text-red-600 text-sm rounded-xl px-3 py-2 mb-4">${esc(state.error)}</div>` : ''}
+      <form id="auth-form" class="space-y-3">
+        <input required name="email" type="email" placeholder="Email" class="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm">
+        <input required name="password" type="password" placeholder="Password" class="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm">
+        <button class="w-full bg-gray-900 text-white rounded-xl py-3 text-sm font-medium">Sign in</button>
+      </form>
+    </div>
+  </div>`;
+}
+document.addEventListener('submit', async (e) => {
+  if (e.target.id !== 'auth-form') return;
+  e.preventDefault();
+  const f = new FormData(e.target);
+  try {
+    const data = await api('/auth/login', { method: 'POST', body: JSON.stringify({ email: f.get('email'), password: f.get('password') }) });
+    loginSuccess(data.token, data.user);
+  } catch (err) { setState({ error: err.message }); }
+});
+
+/* ---------- create sheet (full-screen on mobile, modal on desktop) ---------- */
+const CREATE_FORMS = {
+  ticket: {
+    title: 'New ticket', endpoint: '/tickets', refresh: 'tickets',
+    fields: `<input required name="category" placeholder="Category" class="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm mb-3">
+      <textarea required name="description" placeholder="Describe the issue" rows="3" class="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm mb-3"></textarea>
+      <select name="priority" class="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm mb-3">
+        <option value="Normal">Normal priority</option><option value="Low">Low</option><option value="High">High</option><option value="Urgent">Urgent</option>
+      </select>`
+  },
+  booking: {
+    title: 'New booking', endpoint: '/bookings', refresh: 'bookings',
+    fields: () => `<select required name="item_id" class="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm mb-3">
+        <option value="">Select item…</option>
+        ${(state.data.items || []).filter(i => i.status === 'Available').map(i => `<option value="${i.id}">${esc(i.name)}</option>`).join('')}
+      </select>
+      <div class="flex gap-2 mb-3">
+        <input required name="start_time" type="datetime-local" class="flex-1 border border-gray-200 rounded-xl px-3 py-3 text-sm">
+        <input required name="end_time" type="datetime-local" class="flex-1 border border-gray-200 rounded-xl px-3 py-3 text-sm">
+      </div>`,
+    transform: b => { b.start_time = new Date(b.start_time).toISOString(); b.end_time = new Date(b.end_time).toISOString(); return b; }
+  },
+  faq: {
+    title: 'New FAQ', endpoint: '/faqs', refresh: 'faqs',
+    fields: `<input required name="question" placeholder="Question" class="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm mb-3">
+      <textarea required name="answer" placeholder="Answer" rows="3" class="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm mb-3"></textarea>`
+  },
+  announcement: {
+    title: 'New announcement', endpoint: '/announcements', refresh: 'announcements',
+    fields: `<input required name="title" placeholder="Title" class="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm mb-3">
+      <textarea required name="body" placeholder="Message" rows="3" class="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm mb-3"></textarea>`
+  },
+  item: {
+    title: 'Add equipment or room', endpoint: '/items', refresh: 'equipment',
+    fields: `<input required name="name" placeholder="Name" class="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm mb-3">
+      <select required name="type" class="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm mb-3">
+        <option value="Equipment">Equipment</option><option value="Room">Room</option>
+      </select>`
   }
-
-  // ============================================
-  // NOTIFICATIONS (bell → full sheet, not sub sheet)
-  // ============================================
-  async function openNotifications() {
-    try {
-      state.data.notifications = await api('/notifications');
-      openFullSheet('Notifications', buildNotifications());
-      useState('data', state.data);
-    } catch (err) { useState('error', err.message); }
-  }
-  function buildNotifications() {
-    const list = state.data.notifications || [];
-    return frameShell(list.map(n => `
-      <div style="display:flex;justify-content:space-between;align-items:center;border:1px solid #e2e8f0;border-radius:10px;padding:10px 12px;margin-bottom:8px;${n.is_read ? 'opacity:.5' : ''}">
-        <span style="font-size:13px">${esc(n.message)}</span>
-        ${!n.is_read ? `<button onclick="parent.readNotification(${n.id})" style="border:none;background:none;color:#b45309;font-size:12px;cursor:pointer;text-decoration:underline">Mark read</button>` : ''}
-      </div>`).join('') || `<p style="color:#94a3b8;font-size:14px">No notifications yet.</p>`);
-  }
-  async function readNotification(id) {
-    try { await api(`/notifications/${id}/read`, { method: 'PATCH' }); await openNotifications(); } catch (_) {}
-  }
-
-  // ============================================
-  // RENDER — the only place that mutates the outer DOM
-  // ============================================
-  function applyFrame(frameId, html) {
-    const frame = document.getElementById(frameId);
-    frame.removeAttribute('src');
-    frame.srcdoc = html;
-  }
-
-  function render() {
-    const active = SECTIONS[state.activeTab];
-    document.getElementById('pageTitle').textContent = active ? active.label : 'Select a section';
-    document.getElementById('pageInfo').textContent = state.pageInfo;
-    document.getElementById('menu').classList.toggle('open', state.isMenuOpen);
-    document.getElementById('bellDot').classList.toggle('hidden', !(state.data.notifications || []).some(n => !n.is_read));
-
-    const full = document.getElementById('fullSheet');
-    full.classList.toggle('hidden', !state.fullSheet.active);
-    document.getElementById('fullSheetTitle').textContent = state.fullSheet.title || '';
-    if (state.fullSheet.active) applyFrame('fullFrame', state.fullSheet.content);
-
-    renderMenu();
-  }
-
-  function renderMenu() {
-    const list = document.getElementById('menuList');
-    list.innerHTML = visibleTabs().map(([id, s]) => `
-      <button data-tab="${id}"
-        style="width:100%;text-align:left;padding:10px 12px;border-radius:8px;font-size:14px;border:none;cursor:pointer;display:flex;align-items:center;gap:10px;
-               background:${state.activeTab === id ? '#2563eb' : 'transparent'};color:${state.activeTab === id ? 'white' : '#e2e8f0'}">
-        <i class="fa ${s.icon}"></i>${s.label}
-      </button>`).join('');
-    list.querySelectorAll('[data-tab]').forEach(btn => { btn.onclick = () => loadTab(btn.dataset.tab); });
-
-    document.getElementById('userBox').innerHTML = state.user
-      ? `${esc(state.user.name)} · ${state.user.role}<br><button onclick="parent.logout()" style="color:#f87171;background:none;border:none;font-size:11px;cursor:pointer;margin-top:4px;text-decoration:underline">Sign out</button>`
-      : `Not signed in`;
-  }
-
-  function openFullSheet(title, content) { useState('fullSheet', { active: true, title, content }); }
-  function closeFullSheet() { useState('fullSheet', { active: false, title: '', content: null }); }
-
-  // ============================================
-  // ACTIONS — only these call useState / api; forms live inside iframes
-  // and reach back out through window.parent.
-  // ============================================
-  async function handleLogin(e) {
+};
+let openCreateKind = null;
+function openCreate(kind) { openCreateKind = kind; renderCreateSheet(); }
+function closeCreate() { openCreateKind = null; renderCreateSheet(); }
+function renderCreateSheet() {
+  const host = document.getElementById('create-sheet');
+  if (!openCreateKind) { host.innerHTML = ''; return; }
+  const cfg = CREATE_FORMS[openCreateKind];
+  const fields = typeof cfg.fields === 'function' ? cfg.fields() : cfg.fields;
+  host.innerHTML = `
+  <div class="fixed inset-0 z-50 flex items-end md:items-center justify-center">
+    <div onclick="closeCreate()" class="absolute inset-0 bg-black/30"></div>
+    <div class="relative bg-white w-full h-full md:h-auto md:max-w-md md:rounded-3xl rounded-t-3xl p-6 overflow-y-auto">
+      <div class="flex items-center justify-between mb-5">
+        <h2 class="text-lg font-bold">${cfg.title}</h2>
+        <button onclick="closeCreate()" class="p-1 text-gray-400">${icon('close')}</button>
+      </div>
+      <form id="create-form">${fields}<button class="w-full bg-gray-900 text-white rounded-xl py-3 text-sm font-medium mt-1">Submit</button></form>
+    </div>
+  </div>`;
+  document.getElementById('create-form').onsubmit = async (e) => {
     e.preventDefault();
-    const f = new FormData(e.target);
-    try {
-      const data = await api('/auth/login', { method: 'POST', body: JSON.stringify({ email: f.get('email'), password: f.get('password') }) });
-      loginSuccess(data.token, data.user);
-      loadTab('home');
-    } catch (err) { useState('error', err.message); applyFrame('mainFrame', buildAuth()); }
-  }
+    let body = Object.fromEntries(new FormData(e.target));
+    if (cfg.transform) body = cfg.transform(body);
+    try { await api(cfg.endpoint, { method: 'POST', body: JSON.stringify(body) }); closeCreate(); await loadRoute(cfg.refresh); }
+    catch (err) { setState({ error: err.message }); }
+  };
+}
+async function deleteRecord(endpointKey, id, refresh) {
+  try { await api(`${ENDPOINT_PATH[endpointKey]}/${id}`, { method: 'DELETE' }); await loadRoute(refresh); }
+  catch (e) { setState({ error: e.message }); }
+}
 
-  async function handleForm(e, endpointKey, refreshTab) {
-    e.preventDefault();
-    const body = Object.fromEntries(new FormData(e.target));
-    try { await api(ENDPOINT_PATH[endpointKey], { method: 'POST', body: JSON.stringify(body) }); await loadTab(refreshTab, true); }
-    catch (err) { useState('error', err.message); }
-  }
-  async function handleBooking(e) {
-    e.preventDefault();
-    const body = Object.fromEntries(new FormData(e.target));
-    body.start_time = new Date(body.start_time).toISOString();
-    body.end_time = new Date(body.end_time).toISOString();
-    try { await api('/bookings', { method: 'POST', body: JSON.stringify(body) }); await loadTab('bookings', true); }
-    catch (err) { useState('error', err.message); }
-  }
-  async function deleteRecord(endpointKey, id, refreshTab) {
-    try { await api(`${ENDPOINT_PATH[endpointKey]}/${id}`, { method: 'DELETE' }); await loadTab(refreshTab, true); }
-    catch (err) { useState('error', err.message); }
-  }
-  async function ticketAction(id, kind, status) {
-    try {
-      if (kind === 'assign') await api(`/tickets/${id}/assign`, { method: 'PATCH', body: JSON.stringify({ assigned_to: state.user.id }) });
-      else await api(`/tickets/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) });
-      await loadTab('tickets', true);
-    } catch (err) { useState('error', err.message); }
-  }
-  async function bookingAction(id, action) {
-    try { await api(`/bookings/${id}/${action}`, { method: 'PATCH' }); await loadTab('bookings', true); }
-    catch (err) { useState('error', err.message); }
-  }
-  async function itemStatus(id, status) {
-    try { await api(`/items/${id}`, { method: 'PATCH', body: JSON.stringify({ status }) }); await loadTab('equipment', true); }
-    catch (err) { useState('error', err.message); }
-  }
-  async function userRole(id, role) {
-    try { await api(`/admin/users/${id}/role`, { method: 'PATCH', body: JSON.stringify({ role }) }); await loadTab('admin', true); }
-    catch (err) { useState('error', err.message); }
-  }
+/* ---------- render ---------- */
+const VIEW = {
+  home: homeView, tickets: ticketsView, bookings: bookingsView, equipment: equipmentView,
+  faqs: faqsView, announcements: announcementsView, notifications: notificationsView, admin: adminView, profile: profileView
+};
 
-  // ============================================
-  // EVENTS + INIT
-  // ============================================
-  function bindEvents() {
-    document.getElementById('openMenuBtn').onclick = () => useState('isMenuOpen', true);
-    document.getElementById('closeMenuBtn').onclick = () => useState('isMenuOpen', false);
-    document.getElementById('refreshBtn')?.addEventListener('click', refreshActive);
-    document.getElementById('closeFullSheetBtn').onclick = closeFullSheet;
-    document.getElementById('bellBtn').onclick = openNotifications;
+function render() {
+  const app = document.getElementById('app');
+  if (!state.user) { app.innerHTML = authView(); return; }
 
-    document.addEventListener('click', e => {
-      const menu = document.getElementById('menu');
-      const btn = document.getElementById('openMenuBtn');
-      if (state.isMenuOpen && !menu.contains(e.target) && !btn.contains(e.target)) useState('isMenuOpen', false);
-    });
-  }
+  const body = state.loading && !Object.keys(state.data).length
+    ? `<div class="px-6 py-16 text-center text-sm text-gray-400">Loading…</div>`
+    : (VIEW[state.route] || homeView)();
 
-  function init() {
-    bindEvents();
-    loadTab(state.user ? 'home' : 'home');
-  }
+  app.innerHTML = `
+  <div class="flex h-screen overflow-hidden">
+    ${sidebar()}
+    <div class="flex-1 flex flex-col min-w-0">
+      ${topbar()}
+      <main class="flex-1 overflow-y-auto">
+        ${state.error ? `<div class="max-w-2xl mx-auto px-4 md:px-6 pt-4"><div class="bg-red-50 text-red-600 text-sm rounded-xl px-3 py-2">${esc(state.error)}</div></div>` : ''}
+        ${body}
+      </main>
+    </div>
+  </div>
+  <div id="create-sheet"></div>`;
+  renderCreateSheet();
+}
 
-  document.addEventListener('DOMContentLoaded', init);
-
-  // exposed so content rendered inside iframes can call back via window.parent
-  window.loadTab = loadTab;
-  window.handleLogin = handleLogin;
-  window.handleForm = handleForm;
-  window.handleBooking = handleBooking;
-  window.deleteRecord = deleteRecord;
-  window.ticketAction = ticketAction;
-  window.bookingAction = bookingAction;
-  window.itemStatus = itemStatus;
-  window.userRole = userRole;
-  window.readNotification = readNotification;
-  window.logout = logout;
+if (state.user) loadRoute(state.route);
+render();
 </script>
 </body>
 </html>
