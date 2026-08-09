@@ -13,7 +13,7 @@
   .nav-item.active { color: #ef4444; background: #fef2f2; }
   .nav-item svg { stroke: currentColor; }
   @media (max-width: 767px) {
-    #sidebar { position: fixed; inset: 0; z-index: 50; transform: translateX(-100%); transition: transform .25s ease; }
+    #sidebar { position: fixed; inset: 0; z-index: 50; width: 100% !important; transform: translateX(-100%); transition: transform .25s ease; }
     #sidebar.open { transform: translateX(0); }
   }
 </style>
@@ -40,7 +40,8 @@ const state = {
 function setState(patch) { Object.assign(state, patch); render(); }
 
 // The role that actually gates what's rendered — real role, unless the
-// logged-in admin has switched the view for themselves.
+// logged-in admin has switched the view for themselves. Reflected in the URL
+// as ?role= so a switched view survives refresh/share, same as the route.
 function effectiveRole() {
   if (state.user?.role === 'Admin' && state.viewRole) return state.viewRole;
   return state.user?.role || null;
@@ -59,30 +60,51 @@ async function api(path, opts = {}) {
 function loginSuccess(token, user) {
   localStorage.setItem('token', token);
   localStorage.setItem('user', JSON.stringify(user));
-  setState({ token, user, route: 'home', error: null });
-  loadRoute('home');
+  state.token = token; state.user = user; state.error = null;
+  if (location.hash === '#/home') navigate(); else location.hash = '#/home';
 }
 function logout() {
   localStorage.removeItem('token'); localStorage.removeItem('user');
-  setState({ token: null, user: null, viewRole: null, route: 'home', data: {} });
+  state.token = null; state.user = null; state.viewRole = null; state.data = {};
+  if (location.hash === '#/home') navigate(); else location.hash = '#/home';
 }
 
-/* ---------- routing ---------- */
+/* ---------- hash routing ----------
+   Hash is the single source of truth for both the visible section and the
+   admin's view-role override: #/tickets, #/admin?role=Staff. Reading state
+   back out of the hash means refresh, back/forward, and shared links all work. */
 const ROUTES = {
-  home: { endpoints: ['tickets', 'faqs'] },
+  home: { endpoints: ['tickets', 'faqs', 'announcements'] },
   tickets: { endpoints: ['tickets'] },
   bookings: { endpoints: ['bookings', 'items'] },
   equipment: { endpoints: ['items'] },
   faqs: { endpoints: ['faqs'] },
   announcements: { endpoints: ['announcements'] },
   notifications: { endpoints: ['notifications'] },
-  admin: { endpoints: ['users', 'stats'] },
+  admin: { endpoints: ['users', 'stats', 'tickets'] },
   profile: { endpoints: [] }
 };
 const ENDPOINT_PATH = {
   tickets: '/tickets', bookings: '/bookings', items: '/items', faqs: '/faqs',
   announcements: '/announcements', notifications: '/notifications', users: '/admin/users', stats: '/admin/stats'
 };
+
+function parseHash() {
+  const raw = location.hash.slice(2) || 'home';           // strip '#/'
+  const [route, qs] = raw.split('?');
+  const params = new URLSearchParams(qs || '');
+  return { route: ROUTES[route] ? route : 'home', role: params.get('role') };
+}
+
+function navigate() {
+  const { route, role } = parseHash();
+  state.route = route;
+  state.viewRole = (state.user?.role === 'Admin' && role) ? role : null;
+  state.menuOpen = false;
+  render();
+  loadRoute(route);
+}
+window.addEventListener('hashchange', navigate);
 
 async function loadRoute(name) {
   const def = ROUTES[name];
@@ -96,7 +118,12 @@ async function loadRoute(name) {
   state.loading = false;
   render();
 }
-function go(route) { setState({ route, menuOpen: false }); loadRoute(route); }
+function go(route) { location.hash = '#/' + route; }
+function setViewRole(role) {
+  const target = role || null;
+  const qs = target ? `?role=${target}` : '';
+  location.hash = `#/${state.route}${qs}`;
+}
 
 /* ---------- icons (outline, 1.5px stroke, no fill) ---------- */
 const ICONS = {
@@ -114,7 +141,7 @@ const ICONS = {
   plus: `<path d="M12 5v14M5 12h14"/>`
 };
 function icon(name, cls = 'w-5 h-5') {
-  return `<svg class="${cls}" viewBox="0 0 24 24" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${ICONS[name] || ''}</svg>`;
+  return `<svg class="${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${ICONS[name] || ''}</svg>`;
 }
 
 function esc(s) { const d = document.createElement('div'); d.textContent = s ?? ''; return d.innerHTML; }
@@ -157,7 +184,7 @@ function sidebar() {
       <div class="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-2">View as</div>
       <div class="flex gap-1">
         ${['Admin', 'Staff', 'User'].map(r => `
-          <button onclick="setState({viewRole:'${r}'==='${state.user.role}'?null:'${r}'})"
+          <button onclick="setViewRole('${r}'==='${state.user.role}'?null:'${r}')"
             class="flex-1 text-xs font-medium py-1.5 rounded-lg ${role === r ? 'bg-gray-900 text-white' : 'text-gray-500 hover:bg-gray-100'}">${r}</button>`).join('')}
       </div>
     </div>` : ''}
@@ -196,31 +223,59 @@ function topbar() {
 function homeView() {
   const role = effectiveRole();
   const tickets = (state.data.tickets || []).slice(0, 4);
-  const cards = [
-    ['ticket', 'Ticket', "openCreate('ticket')"],
-    ['booking', 'Booking', "openCreate('booking')"],
-    ['faq', 'FAQ', role === 'Admin' ? "openCreate('faq')" : "go('faqs')"]
-  ];
+  const myTickets = tickets;
+  const openCount = (state.data.tickets || []).filter(t => !['Resolved', 'Closed'].includes(t.status)).length;
+  const resolvedCount = (state.data.tickets || []).filter(t => ['Resolved', 'Closed'].includes(t.status)).length;
+  const latestAnnouncement = (state.data.announcements || [])[0];
 
   return `
   <div class="px-4 md:px-6 py-6 max-w-2xl mx-auto">
-    <div class="bg-gradient-to-br from-red-500 to-red-600 rounded-3xl px-6 py-8 text-center text-white mb-8">
+    <div class="bg-gradient-to-br from-red-500 to-red-600 rounded-3xl px-6 py-8 text-center text-white mb-5">
       <h1 class="text-2xl font-extrabold tracking-tight mb-1">SEAMLESS SUPPORT SERVICE</h1>
       <p class="text-sm text-red-100">Open a ticket and now</p>
     </div>
 
+    ${latestAnnouncement ? `
+    <button onclick="go('announcements')" class="w-full flex items-start gap-3 bg-amber-50 border border-amber-100 rounded-2xl px-4 py-3 mb-5 text-left">
+      <span class="text-amber-500 mt-0.5 flex-shrink-0">${icon('announcement', 'w-4 h-4')}</span>
+      <div class="min-w-0">
+        <div class="text-xs font-semibold text-amber-800">${esc(latestAnnouncement.title)}</div>
+        <div class="text-xs text-amber-600 truncate">${esc(latestAnnouncement.body)}</div>
+      </div>
+    </button>` : ''}
+
+    <div class="grid grid-cols-2 gap-3 mb-8">
+      <div class="border border-gray-100 rounded-2xl px-4 py-3.5">
+        <div class="text-2xl font-bold">${openCount}</div>
+        <div class="text-xs text-gray-400">Open tickets</div>
+      </div>
+      <div class="border border-gray-100 rounded-2xl px-4 py-3.5">
+        <div class="text-2xl font-bold">${resolvedCount}</div>
+        <div class="text-xs text-gray-400">Resolved</div>
+      </div>
+    </div>
+
     <h2 class="text-lg font-bold mb-3">Create</h2>
     <div class="grid grid-cols-3 gap-3 mb-8">
-      ${cards.map(([ic, label, action]) => `
-        <button onclick="${action}" class="aspect-square border border-gray-200 rounded-2xl flex flex-col items-center justify-center gap-2 hover:border-gray-900 hover:bg-gray-50 transition">
-          ${icon(ic, 'w-6 h-6 text-gray-700')}
-          <span class="text-xs font-medium text-gray-600">${label}</span>
-        </button>`).join('')}
+      <button onclick="openCreate('ticket')" class="aspect-square border border-gray-200 rounded-2xl flex flex-col items-center justify-center gap-2 hover:border-gray-900 hover:bg-gray-50 transition">
+        ${icon('ticket', 'w-6 h-6 text-gray-700')}<span class="text-xs font-medium text-gray-600">Ticket</span>
+      </button>
+      <button onclick="openCreate('booking')" class="aspect-square border border-gray-200 rounded-2xl flex flex-col items-center justify-center gap-2 hover:border-gray-900 hover:bg-gray-50 transition">
+        ${icon('booking', 'w-6 h-6 text-gray-700')}<span class="text-xs font-medium text-gray-600">Booking</span>
+      </button>
+      <div class="aspect-square border border-gray-200 rounded-2xl flex flex-col items-center justify-center gap-1.5 px-1">
+        ${icon('faq', 'w-6 h-6 text-gray-700')}
+        <span class="text-xs font-medium text-gray-600 mb-0.5">FAQ</span>
+        <div class="flex items-center gap-2 text-[11px]">
+          ${role === 'Admin' ? `<button onclick="openCreate('faq')" class="font-semibold text-red-600">New</button><span class="text-gray-200">|</span>` : ''}
+          <button onclick="go('faqs')" class="text-gray-400 underline">View</button>
+        </div>
+      </div>
     </div>
 
     <h2 class="text-lg font-bold mb-3">Support Tickets</h2>
     <div class="space-y-3">
-      ${tickets.length ? tickets.map(ticketRow).join('') : emptyRow('No tickets yet')}
+      ${myTickets.length ? myTickets.map(ticketRow).join('') : emptyRow('No tickets yet')}
     </div>
   </div>`;
 }
@@ -391,15 +446,27 @@ function adminView() {
   if (role !== 'Admin') return `<div class="px-4 md:px-6 py-16 text-center text-sm text-gray-400">Admin access required.</div>`;
   const s = state.data.stats || {};
   const users = state.data.users || [];
+  const recentTickets = (state.data.tickets || []).slice(0, 3);
   return `
   <div class="px-4 md:px-6 py-6 max-w-2xl mx-auto">
     <h1 class="text-xl font-bold mb-5">Admin</h1>
-    <div class="grid grid-cols-3 gap-3 mb-8">
+    <div class="grid grid-cols-3 gap-3 mb-6">
       ${[['total_users', 'Users'], ['total_tickets', 'Tickets'], ['total_bookings', 'Bookings']].map(([k, label]) => `
         <div class="border border-gray-100 rounded-2xl py-4 text-center">
           <div class="text-2xl font-bold">${s[k] ?? '—'}</div><div class="text-xs text-gray-400">${label}</div>
         </div>`).join('')}
     </div>
+
+    ${recentTickets.length ? `
+    <h2 class="text-sm font-bold text-gray-400 uppercase tracking-wide mb-3">Recent activity</h2>
+    <div class="space-y-2 mb-8">
+      ${recentTickets.map(t => `
+        <div class="flex items-center justify-between border border-gray-100 rounded-xl px-4 py-2.5">
+          <span class="text-sm text-gray-600 truncate">${esc(t.category)}</span>
+          ${pill(t.status)}
+        </div>`).join('')}
+    </div>` : ''}
+
     <h2 class="text-sm font-bold text-gray-400 uppercase tracking-wide mb-3">Users</h2>
     <div class="space-y-2">
       ${users.map(u => `
@@ -557,8 +624,7 @@ function render() {
   renderCreateSheet();
 }
 
-if (state.user) loadRoute(state.route);
-render();
+navigate();
 </script>
 </body>
 </html>
