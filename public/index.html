@@ -35,6 +35,7 @@ const state = {
   user: JSON.parse(localStorage.getItem('user') || 'null'),
   viewRole: null,          // frontend-only override — lets the real admin preview other roles
   route: 'home',
+  authMode: 'login',
   menuOpen: false,
   notifOpen: false,
   data: {},
@@ -553,29 +554,59 @@ function profileView() {
 }
 
 function authView() {
+  const mode = state.authMode || 'login';
+  const isLogin = mode === 'login';
   return `
   <div class="min-h-screen flex items-center justify-center px-5">
     <div class="w-full max-w-sm">
       <div class="text-center mb-8 flex justify-center">
         ${logoLockup(36)}
       </div>
+
+      <div class="flex bg-gray-100 rounded-xl p-1 mb-6">
+        <button onclick="setState({authMode:'login',error:null})" class="flex-1 text-sm font-medium py-2 rounded-lg transition ${isLogin ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500'}">Sign in</button>
+        <button onclick="setState({authMode:'signup',error:null})" class="flex-1 text-sm font-medium py-2 rounded-lg transition ${!isLogin ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500'}">Sign up</button>
+      </div>
+
       ${state.error ? `<div class="bg-red-50 text-red-600 text-sm rounded-xl px-3 py-2 mb-4">${esc(state.error)}</div>` : ''}
-      <form id="auth-form" class="space-y-3">
+
+      ${isLogin ? `
+      <form id="login-form" class="space-y-3">
         <input required name="email" type="email" placeholder="Email" class="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm">
         <input required name="password" type="password" placeholder="Password" class="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm">
         <button class="w-full bg-gray-900 text-white rounded-xl py-3 text-sm font-medium">Sign in</button>
-      </form>
+      </form>` : `
+      <form id="signup-form" class="space-y-3">
+        <input required name="name" placeholder="Full name" class="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm">
+        <input required name="email" type="email" placeholder="Email" class="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm">
+        <input required name="password" type="password" minlength="6" placeholder="Password (min. 6 characters)" class="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm">
+        <button class="w-full bg-gray-900 text-white rounded-xl py-3 text-sm font-medium">Create account</button>
+      </form>`}
     </div>
   </div>`;
 }
 document.addEventListener('submit', async (e) => {
-  if (e.target.id !== 'auth-form') return;
-  e.preventDefault();
-  const f = new FormData(e.target);
-  try {
-    const data = await api('/auth/login', { method: 'POST', body: JSON.stringify({ email: f.get('email'), password: f.get('password') }) });
-    loginSuccess(data.token, data.user);
-  } catch (err) { setState({ error: err.message }); }
+  if (e.target.id === 'login-form') {
+    e.preventDefault();
+    const f = new FormData(e.target);
+    try {
+      const data = await api('/auth/login', { method: 'POST', body: JSON.stringify({ email: f.get('email'), password: f.get('password') }) });
+      loginSuccess(data.token, data.user);
+    } catch (err) { setState({ error: err.message }); }
+    return;
+  }
+  if (e.target.id === 'signup-form') {
+    e.preventDefault();
+    const f = new FormData(e.target);
+    const email = f.get('email'), password = f.get('password');
+    try {
+      // /auth/register only creates the account — sign in right after so the
+      // person lands straight in the app instead of back at the login form.
+      await api('/auth/register', { method: 'POST', body: JSON.stringify({ name: f.get('name'), email, password }) });
+      const data = await api('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) });
+      loginSuccess(data.token, data.user);
+    } catch (err) { setState({ error: err.message }); }
+  }
 });
 
 /* ---------- create sheet (full-screen on mobile, modal on desktop) ---------- */
