@@ -20,6 +20,9 @@ app.use(express.json());
 app.use(express.static('public'));
 
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
+app.get('/docs/erd', (req, res) => {
+  res.sendFile(path.join(__dirname, './docs/erd.html')); // change to your HTML filename
+});
 
 app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(openapiSpec));
 
