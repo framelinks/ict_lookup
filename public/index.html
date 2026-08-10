@@ -6,10 +6,11 @@
 <title>ICT Lookup</title>
 <script src="https://cdn.tailwindcss.com"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
 <style>
   body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
   .font-display { font-family: 'Plus Jakarta Sans', -apple-system, sans-serif; letter-spacing: -0.01em; }
+  .font-mono { font-family: 'IBM Plex Mono', ui-monospace, monospace; letter-spacing: 0.02em; }
   ::-webkit-scrollbar { width: 6px; }
   ::-webkit-scrollbar-thumb { background: #d4d4d4; border-radius: 3px; }
   .nav-item { color: #6b7280; }
@@ -20,6 +21,22 @@
     #sidebar { position: fixed; inset: 0; z-index: 50; width: 100% !important; transform: translateX(-100%); transition: transform .25s ease; }
     #sidebar.open { transform: translateX(0); }
   }
+
+  /* Accordion — grid-rows trick so the panel animates open/closed with no JS height math */
+  .acc-panel { display: grid; grid-template-rows: 0fr; transition: grid-template-rows .28s cubic-bezier(.4,0,.2,1); }
+  .acc-panel > div { overflow: hidden; }
+  .acc-item[data-open="true"] .acc-panel { grid-template-rows: 1fr; }
+  .acc-item[data-open="true"] .acc-chevron { transform: rotate(90deg); }
+  .acc-chevron { transition: transform .25s ease; }
+  .acc-item { transition: border-color .2s ease, box-shadow .2s ease; }
+  .acc-item[data-open="true"] { border-color: #fecaca; box-shadow: 0 4px 20px -6px rgba(239,68,68,0.12); }
+
+  /* Signal-pulse motif used on the logo mark + auth backdrop */
+  @keyframes pulse-ring { 0% { transform: scale(.9); opacity: .55; } 100% { transform: scale(1.9); opacity: 0; } }
+  .pulse-ring { animation: pulse-ring 2.4s cubic-bezier(.3,0,.3,1) infinite; transform-origin: center; }
+
+  input:focus, textarea:focus, select:focus { outline: none; border-color: #ef4444; box-shadow: 0 0 0 3px rgba(239,68,68,.1); }
+  .auth-field { transition: box-shadow .15s ease, border-color .15s ease; }
 </style>
 </head>
 <body class="bg-white text-gray-900">
@@ -80,7 +97,7 @@ function logout() {
    admin's view-role override: #/tickets, #/admin?role=Staff. Reading state
    back out of the hash means refresh, back/forward, and shared links all work. */
 const ROUTES = {
-  home: { endpoints: ['tickets', 'faqs', 'announcements'] },
+  home: { endpoints: ['tickets', 'faqs', 'announcements', 'items'] },
   tickets: { endpoints: ['tickets'] },
   bookings: { endpoints: ['bookings', 'items'] },
   equipment: { endpoints: ['items'] },
@@ -88,7 +105,7 @@ const ROUTES = {
   announcements: { endpoints: ['announcements'] },
   notifications: { endpoints: ['notifications'] },
   admin: { endpoints: ['users', 'stats', 'tickets'] },
-  profile: { endpoints: [] }
+  profile: { endpoints: ['tickets', 'bookings'] }
 };
 const ENDPOINT_PATH = {
   tickets: '/tickets', bookings: '/bookings', items: '/items', faqs: '/faqs',
@@ -149,7 +166,10 @@ const ICONS = {
   menu: `<path d="M4 7h16M4 12h16M4 17h16"/>`,
   close: `<path d="M6 6l12 12M18 6L6 18"/>`,
   chevron: `<path d="M9 6l6 6-6 6"/>`,
-  plus: `<path d="M12 5v14M5 12h14"/>`
+  plus: `<path d="M12 5v14M5 12h14"/>`,
+  mail: `<rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M4 6.5 12 13l8-6.5"/>`,
+  lock: `<rect x="5" y="10.5" width="14" height="9" rx="2"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/>`,
+  user: `<circle cx="12" cy="8.5" r="3.5"/><path d="M5 20c0-3.6 3.1-6 7-6s7 2.4 7 6"/>`
 };
 function icon(name, cls = 'w-5 h-5') {
   return `<svg class="${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${ICONS[name] || ''}</svg>`;
@@ -158,20 +178,31 @@ function icon(name, cls = 'w-5 h-5') {
 function esc(s) { const d = document.createElement('div'); d.textContent = s ?? ''; return d.innerHTML; }
 function fmtDate(d) { const dt = new Date(d); return dt.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' · ' + dt.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }); }
 
-// Logo mark — a headset/support glyph in a rounded square, reads as "help desk"
-// at a glance rather than a generic abstract shape.
-function logoMark(size = 32) {
+// Logo mark — a single signal/pulse glyph in a rounded disc: a source point
+// reaching out in soft arcs, which is what this app actually does (a request
+// goes out, help answers back). Deliberately built from three strokes, not
+// a busy illustration, and round rather than squared so it reads as a live
+// mark, not a settings icon.
+let logoGradSeq = 0;
+function logoMark(size = 32, animated = false) {
+  const gid = 'logoGrad' + (logoGradSeq++);
   return `
-  <svg width="${size}" height="${size}" viewBox="0 0 32 32" fill="none">
-    <rect width="32" height="32" rx="9" fill="#ef4444"/>
-    <path d="M9 17v-2a7 7 0 0 1 14 0v2" stroke="white" stroke-width="1.8" stroke-linecap="round"/>
-    <rect x="7.5" y="16" width="4" height="6" rx="2" fill="white"/>
-    <rect x="20.5" y="16" width="4" height="6" rx="2" fill="white"/>
-    <path d="M23 22.5v.5a3 3 0 0 1-3 3h-2.5" stroke="white" stroke-width="1.8" stroke-linecap="round"/>
+  <svg width="${size}" height="${size}" viewBox="0 0 32 32" fill="none" class="flex-shrink-0">
+    <defs>
+      <linearGradient id="${gid}" x1="4" y1="2" x2="28" y2="30" gradientUnits="userSpaceOnUse">
+        <stop offset="0" stop-color="#f87171"/>
+        <stop offset="1" stop-color="#dc2626"/>
+      </linearGradient>
+    </defs>
+    <circle cx="16" cy="16" r="16" fill="url(#${gid})"/>
+    ${animated ? '<circle cx="16" cy="16" r="6" fill="none" stroke="white" stroke-width="1" opacity="0.5" class="pulse-ring"/>' : ''}
+    <path d="M11.5 18a6.5 6.5 0 0 1 13 0" stroke="white" stroke-width="1.7" stroke-linecap="round" opacity="0.5"/>
+    <path d="M14 18a4 4 0 0 1 8 0" stroke="white" stroke-width="1.7" stroke-linecap="round"/>
+    <circle cx="18" cy="18" r="2.1" fill="white"/>
   </svg>`;
 }
 function logoLockup(size = 28) {
-  return `<span class="flex items-center gap-2">${logoMark(size)}<span class="font-display font-bold text-lg"><span class="text-gray-900">ICT</span> <span class="font-medium text-gray-400">Lookup</span></span></span>`;
+  return `<span class="flex items-center gap-2.5">${logoMark(size)}<span class="font-display font-bold text-lg leading-none"><span class="text-gray-900">ICT</span> <span class="font-medium text-gray-400">Lookup</span></span></span>`;
 }
 
 const STATUS_COLOR = {
@@ -276,19 +307,47 @@ document.addEventListener('click', (e) => {
 
 /* ---------- views ---------- */
 
+// Abstract "signal" backdrop for the hero — concentric arcs radiating from a
+// source point, echoing the logo mark. Built as an inline SVG (not a hot-linked
+// photo) so it stays crisp, on-brand, and never breaks or feels stocky.
+function heroPattern() {
+  return `
+  <svg class="absolute inset-0 w-full h-full opacity-[0.16]" viewBox="0 0 400 200" preserveAspectRatio="xMidYMid slice" fill="none">
+    ${[36, 68, 100, 132, 164].map(r => `<circle cx="340" cy="30" r="${r}" stroke="white" stroke-width="1.2"/>`).join('')}
+    <circle cx="340" cy="30" r="5" fill="white"/>
+    <circle cx="34" cy="176" r="2" fill="white"/>
+    <circle cx="70" cy="150" r="2" fill="white"/>
+    <circle cx="20" cy="120" r="1.4" fill="white"/>
+  </svg>`;
+}
+
 function homeView() {
   const role = effectiveRole();
-  const tickets = (state.data.tickets || []).slice(0, 4);
-  const myTickets = tickets;
-  const openCount = (state.data.tickets || []).filter(t => !['Resolved', 'Closed'].includes(t.status)).length;
-  const resolvedCount = (state.data.tickets || []).filter(t => ['Resolved', 'Closed'].includes(t.status)).length;
+  const allTickets = state.data.tickets || [];
+  const myTickets = allTickets.slice(0, 4);
+  const openCount = allTickets.filter(t => !['Resolved', 'Closed'].includes(t.status)).length;
+  const resolvedCount = allTickets.filter(t => ['Resolved', 'Closed'].includes(t.status)).length;
   const latestAnnouncement = (state.data.announcements || [])[0];
+  const bestFit = (state.data.items || []).find(i => i.status === 'Available');
 
   return `
   <div class="px-4 md:px-6 py-6 max-w-2xl mx-auto">
-    <div class="bg-gradient-to-br from-red-500 to-red-600 rounded-3xl px-6 py-8 text-center text-white mb-5">
-      <h1 class="text-2xl font-extrabold tracking-tight mb-1">SEAMLESS SUPPORT SERVICE</h1>
-      <p class="text-sm text-red-100">Open a ticket and now</p>
+    <div class="relative overflow-hidden bg-gradient-to-br from-red-500 via-red-600 to-red-700 rounded-3xl px-6 py-9 text-center text-white mb-5">
+      ${heroPattern()}
+      <div class="relative">
+        <div class="inline-flex items-center gap-2 bg-white/15 backdrop-blur-sm text-[11px] font-semibold tracking-wide uppercase rounded-full px-3 py-1 mb-4">
+          <span class="relative inline-flex w-1.5 h-1.5">
+            <span class="absolute inset-0 rounded-full bg-emerald-300 pulse-ring"></span>
+            <span class="relative w-1.5 h-1.5 rounded-full bg-emerald-300"></span>
+          </span>
+          Desk is online
+        </div>
+        <h1 class="text-2xl font-extrabold tracking-tight mb-1.5 font-display">Seamless support,<br>whenever you need it</h1>
+        <p class="text-sm text-red-100 mb-5">Log an issue, book equipment, and track it through to done.</p>
+        <button onclick="openCreate('ticket')" class="bg-white text-red-600 text-sm font-semibold rounded-full px-5 py-2.5 inline-flex items-center gap-1.5 shadow-lg shadow-red-900/20">
+          ${icon('plus', 'w-4 h-4')}Raise a ticket
+        </button>
+      </div>
     </div>
 
     ${latestAnnouncement ? `
@@ -300,7 +359,7 @@ function homeView() {
       </div>
     </button>` : ''}
 
-    <div class="grid grid-cols-2 gap-3 mb-8">
+    <div class="grid grid-cols-2 gap-3 mb-5">
       <div class="border border-gray-100 rounded-2xl px-4 py-3.5">
         <div class="text-2xl font-bold">${openCount}</div>
         <div class="text-xs text-gray-400">Open tickets</div>
@@ -310,6 +369,20 @@ function homeView() {
         <div class="text-xs text-gray-400">Resolved</div>
       </div>
     </div>
+
+    ${bestFit ? `
+    <button onclick="openCreate('booking')" class="w-full relative overflow-hidden text-left bg-gradient-to-r from-gray-900 via-gray-900 to-red-900 rounded-2xl px-5 py-4 mb-8 flex items-center gap-4 group">
+      <div class="absolute -right-6 -bottom-8 w-28 h-28 rounded-full bg-red-500/20 blur-xl"></div>
+      <div class="relative w-11 h-11 rounded-xl bg-white/10 flex items-center justify-center flex-shrink-0">
+        ${icon('equipment', 'w-5 h-5 text-white')}
+      </div>
+      <div class="relative min-w-0 flex-1">
+        <div class="text-[11px] font-semibold text-red-200 uppercase tracking-wide mb-0.5">Best fit for your next service</div>
+        <div class="text-sm font-semibold text-white truncate">${esc(bestFit.name)}</div>
+        <div class="text-xs text-white/50">Available now · tap to book</div>
+      </div>
+      <span class="relative text-white/60 group-hover:text-white transition">${icon('chevron', 'w-4 h-4')}</span>
+    </button>` : ''}
 
     <h2 class="text-lg font-bold mb-3">Create</h2>
     <div class="grid grid-cols-3 gap-3 mb-8">
@@ -329,30 +402,74 @@ function homeView() {
       </div>
     </div>
 
-    <h2 class="text-lg font-bold mb-3">Support Tickets</h2>
+    <div class="flex items-center justify-between mb-3">
+      <h2 class="text-lg font-bold">Support Tickets</h2>
+      ${allTickets.length > 4 ? `<button onclick="go('tickets')" class="text-xs font-semibold text-red-600">See all</button>` : ''}
+    </div>
     <div class="space-y-3">
-      ${myTickets.length ? myTickets.map(ticketRow).join('') : emptyRow('No tickets yet')}
+      ${myTickets.length ? myTickets.map(t => ticketCard(t, role)).join('') : emptyRow('No tickets yet')}
     </div>
   </div>`;
 }
 
 function emptyRow(msg) { return `<div class="border border-gray-100 rounded-2xl px-4 py-8 text-center text-sm text-gray-400">${msg}</div>`; }
 
-function ticketRow(t) {
+/* ---------- ticket accordion card ----------
+   One card, one function, used on Home and the full Tickets list alike.
+   Collapsed = scan state (what/status). Expanded = act state (who/when/next). */
+const openTicketIds = new Set();
+function toggleTicket(id) {
+  openTicketIds.has(id) ? openTicketIds.delete(id) : openTicketIds.add(id);
+  render();
+}
+const TICKET_NEXT = { Pending: 'Assigned', Assigned: 'In Progress', 'In Progress': 'Resolved', Resolved: 'Closed' };
+const PRIORITY_DOT = { Low: 'bg-gray-300', Normal: 'bg-blue-400', High: 'bg-amber-400', Urgent: 'bg-red-500' };
+
+function ticketCard(t, role) {
+  const open = openTicketIds.has(t.id);
+  const canAct = role && role !== 'User';
   return `
-  <div class="border border-gray-100 rounded-2xl px-4 py-3.5">
-    <div class="flex justify-between items-start gap-2 mb-1">
-      <div class="font-medium text-sm">${esc(t.category)}</div>
-      ${pill(t.status)}
-    </div>
-    <p class="text-sm text-gray-500 line-clamp-1">${esc(t.description)}</p>
+  <div data-open="${open}" class="acc-item border border-gray-100 rounded-2xl overflow-hidden bg-white">
+    <button onclick="toggleTicket(${t.id})" class="w-full flex items-center gap-3 px-4 py-3.5 text-left">
+      <span class="w-2 h-2 rounded-full flex-shrink-0 ${PRIORITY_DOT[t.priority] || 'bg-gray-300'}"></span>
+      <div class="min-w-0 flex-1">
+        <div class="flex items-center justify-between gap-2 mb-0.5">
+          <div class="font-medium text-sm truncate">${esc(t.category)}</div>
+          ${pill(t.status)}
+        </div>
+        <p class="text-sm text-gray-500 truncate">${esc(t.description)}</p>
+      </div>
+      <span class="acc-chevron text-gray-300 flex-shrink-0">${icon('chevron', 'w-4 h-4')}</span>
+    </button>
+    <div class="acc-panel"><div>
+      <div class="px-4 pb-4">
+        <p class="text-sm text-gray-600 mb-3 pt-1 border-t border-gray-50">${esc(t.description)}</p>
+        <div class="grid grid-cols-3 gap-2 mb-3">
+          <div class="bg-gray-50 rounded-xl px-2.5 py-2">
+            <div class="text-[10px] text-gray-400 uppercase tracking-wide font-mono mb-0.5">Ticket</div>
+            <div class="text-xs font-semibold font-mono">#${String(t.id).padStart(4, '0')}</div>
+          </div>
+          <div class="bg-gray-50 rounded-xl px-2.5 py-2">
+            <div class="text-[10px] text-gray-400 uppercase tracking-wide font-mono mb-0.5">Priority</div>
+            <div class="text-xs font-semibold">${t.priority}</div>
+          </div>
+          <div class="bg-gray-50 rounded-xl px-2.5 py-2">
+            <div class="text-[10px] text-gray-400 uppercase tracking-wide font-mono mb-0.5">Owner</div>
+            <div class="text-xs font-semibold truncate">${t.assignee_name ? esc(t.assignee_name) : '—'}</div>
+          </div>
+        </div>
+        ${canAct ? `<div class="flex gap-2">
+          ${t.status === 'Pending' ? `<button onclick="event.stopPropagation();ticketAction(${t.id},'assign')" class="text-xs border border-gray-200 rounded-full px-3 py-1.5 font-medium">Assign to me</button>` : ''}
+          ${TICKET_NEXT[t.status] ? `<button onclick="event.stopPropagation();ticketAction(${t.id},'status','${TICKET_NEXT[t.status]}')" class="text-xs bg-emerald-600 text-white rounded-full px-3 py-1.5 font-medium">Move to ${TICKET_NEXT[t.status]}</button>` : ''}
+        </div>` : ''}
+      </div>
+    </div></div>
   </div>`;
 }
 
 function ticketsView() {
   const role = effectiveRole();
   const tickets = state.data.tickets || [];
-  const nextMap = { Pending: 'Assigned', Assigned: 'In Progress', 'In Progress': 'Resolved', Resolved: 'Closed' };
   return `
   <div class="px-4 md:px-6 py-6 max-w-2xl mx-auto">
     <div class="flex items-center justify-between mb-5">
@@ -360,18 +477,7 @@ function ticketsView() {
       <button onclick="openCreate('ticket')" class="flex items-center gap-1.5 bg-gray-900 text-white text-sm font-medium px-3.5 py-2 rounded-xl">${icon('plus', 'w-4 h-4')}New</button>
     </div>
     <div class="space-y-3">
-      ${tickets.length ? tickets.map(t => `
-        <div class="border border-gray-100 rounded-2xl px-4 py-4">
-          <div class="flex justify-between items-start gap-2 mb-1">
-            <div class="font-medium text-sm">${esc(t.category)}</div>${pill(t.status)}
-          </div>
-          <p class="text-sm text-gray-500 mb-2">${esc(t.description)}</p>
-          <div class="text-xs text-gray-400 mb-3">#${t.id} · ${t.priority} priority${t.assignee_name ? ' · ' + esc(t.assignee_name) : ''}</div>
-          ${role !== 'User' ? `<div class="flex gap-2">
-            ${t.status === 'Pending' ? `<button onclick="ticketAction(${t.id},'assign')" class="text-xs border border-gray-200 rounded-full px-3 py-1.5 font-medium">Assign to me</button>` : ''}
-            ${nextMap[t.status] ? `<button onclick="ticketAction(${t.id},'status','${nextMap[t.status]}')" class="text-xs bg-emerald-600 text-white rounded-full px-3 py-1.5 font-medium">Move to ${nextMap[t.status]}</button>` : ''}
-          </div>` : ''}
-        </div>`).join('') : emptyRow('No tickets yet')}
+      ${tickets.length ? tickets.map(t => ticketCard(t, role)).join('') : emptyRow('No tickets yet')}
     </div>
   </div>`;
 }
@@ -540,48 +646,142 @@ async function changeRole(id, role) {
   catch (e) { setState({ error: e.message }); }
 }
 
+const ROLE_BADGE = {
+  Admin: 'bg-red-500/15 text-red-100 border-red-400/30',
+  Staff: 'bg-blue-500/15 text-blue-100 border-blue-400/30',
+  User: 'bg-white/10 text-white/70 border-white/20'
+};
+
 function profileView() {
   const u = state.user;
+  const tickets = state.data.tickets || [];
+  const bookings = state.data.bookings || [];
+  const resolved = tickets.filter(t => ['Resolved', 'Closed'].includes(t.status)).length;
+  const stats = [
+    ['Tickets raised', tickets.length],
+    ['Resolved', resolved],
+    ['Bookings', bookings.length]
+  ];
+
   return `
-  <div class="px-4 md:px-6 py-6 max-w-md mx-auto text-center">
-    <div class="w-20 h-20 rounded-full bg-gray-900 text-white flex items-center justify-center text-2xl font-semibold mx-auto mb-4">
-      ${esc(u.name[0].toUpperCase())}
+  <div class="max-w-md mx-auto pb-8">
+    <div class="relative overflow-hidden bg-gradient-to-br from-gray-900 via-gray-900 to-red-950 px-6 pt-10 pb-16 text-center text-white">
+      <svg class="absolute inset-0 w-full h-full opacity-[0.14]" viewBox="0 0 400 220" preserveAspectRatio="xMidYMid slice" fill="none">
+        ${[30, 60, 90, 120, 150].map(r => `<circle cx="340" cy="10" r="${r}" stroke="white" stroke-width="1"/>`).join('')}
+      </svg>
+      <div class="relative">
+        <div class="w-20 h-20 rounded-full bg-gradient-to-br from-red-400 to-red-600 ring-4 ring-white/15 text-white flex items-center justify-center text-2xl font-bold mx-auto mb-3 font-display">
+          ${esc(u.name[0].toUpperCase())}
+        </div>
+        <h1 class="font-display text-lg font-bold">${esc(u.name)}</h1>
+        <p class="text-sm text-white/40 mb-3">${esc(u.email)}</p>
+        <span class="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide border rounded-full px-3 py-1 ${ROLE_BADGE[u.role] || ROLE_BADGE.User}">
+          ${icon(u.role === 'Admin' ? 'admin' : 'home', 'w-3 h-3')}${u.role}
+        </span>
+      </div>
     </div>
-    <h1 class="text-lg font-bold">${esc(u.name)}</h1>
-    <p class="text-sm text-gray-400 mb-6">${esc(u.email)} · ${u.role}</p>
-    <button onclick="logout()" class="text-sm font-medium text-red-600 border border-red-200 rounded-xl px-5 py-2.5">Sign out</button>
+
+    <div class="px-4 md:px-6 -mt-8 relative">
+      <div class="grid grid-cols-3 gap-3 mb-6">
+        ${stats.map(([label, val]) => `
+          <div class="bg-white border border-gray-100 rounded-2xl py-3.5 text-center shadow-sm">
+            <div class="text-xl font-bold font-display">${val}</div>
+            <div class="text-[11px] text-gray-400 leading-tight mt-0.5">${label}</div>
+          </div>`).join('')}
+      </div>
+
+      <div class="border border-gray-100 rounded-2xl divide-y divide-gray-50 mb-6">
+        <div class="flex items-center justify-between px-4 py-3.5">
+          <span class="text-sm text-gray-500">Email</span>
+          <span class="text-sm font-medium truncate max-w-[60%]">${esc(u.email)}</span>
+        </div>
+        <div class="flex items-center justify-between px-4 py-3.5">
+          <span class="text-sm text-gray-500">Access level</span>
+          <span class="text-sm font-medium">${u.role}</span>
+        </div>
+      </div>
+
+      <button onclick="logout()" class="w-full text-sm font-medium text-red-600 border border-red-200 rounded-xl py-3 hover:bg-red-50 transition">Sign out</button>
+    </div>
   </div>`;
+}
+
+const AUTH_FEATURES = [
+  ['ticket', 'Log a fault once — track it through to resolved'],
+  ['booking', 'Reserve rooms and AV gear ahead of service'],
+  ['announcement', 'Stay in sync with desk-wide announcements']
+];
+
+// Field with a leading icon — small touch, but it's the thing that separates
+// a "form on a page" from something that reads as a real product.
+function authField({ name, type = 'text', placeholder, iconName, extra = '' }) {
+  return `
+  <label class="relative block">
+    <span class="absolute left-4 top-1/2 -translate-y-1/2 text-gray-300">${icon(iconName, 'w-4 h-4')}</span>
+    <input ${extra} name="${name}" type="${type}" placeholder="${placeholder}"
+      class="auth-field w-full border border-gray-200 rounded-xl pl-11 pr-4 py-3 text-sm bg-gray-50/60">
+  </label>`;
 }
 
 function authView() {
   const mode = state.authMode || 'login';
   const isLogin = mode === 'login';
   return `
-  <div class="min-h-screen flex items-center justify-center px-5">
-    <div class="w-full max-w-sm">
-      <div class="text-center mb-8 flex justify-center">
-        ${logoLockup(36)}
+  <div class="min-h-screen flex bg-white">
+    <!-- Brand panel: desktop-only, carries the identity so the form side can stay quiet -->
+    <div class="hidden lg:flex lg:w-[42%] relative overflow-hidden bg-gradient-to-br from-gray-900 via-gray-900 to-red-950 text-white flex-col justify-between p-10">
+      <svg class="absolute inset-0 w-full h-full opacity-[0.14]" viewBox="0 0 500 700" preserveAspectRatio="xMidYMid slice" fill="none">
+        ${[50, 100, 150, 200, 250, 300].map(r => `<circle cx="90" cy="120" r="${r}" stroke="white" stroke-width="1"/>`).join('')}
+      </svg>
+      <div class="relative">${logoLockup(34)}</div>
+      <div class="relative">
+        <h2 class="font-display text-3xl font-extrabold leading-tight mb-6">One desk for every<br>church ICT request.</h2>
+        <div class="space-y-4">
+          ${AUTH_FEATURES.map(([ic, label]) => `
+            <div class="flex items-center gap-3">
+              <span class="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center flex-shrink-0">${icon(ic, 'w-4 h-4')}</span>
+              <span class="text-sm text-white/70">${label}</span>
+            </div>`).join('')}
+        </div>
       </div>
+      <p class="relative text-xs text-white/30">Living Faith Church · ICT Service Desk</p>
+    </div>
 
-      <div class="flex bg-gray-100 rounded-xl p-1 mb-6">
-        <button onclick="setState({authMode:'login',error:null})" class="flex-1 text-sm font-medium py-2 rounded-lg transition ${isLogin ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500'}">Sign in</button>
-        <button onclick="setState({authMode:'signup',error:null})" class="flex-1 text-sm font-medium py-2 rounded-lg transition ${!isLogin ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500'}">Sign up</button>
+    <!-- Form panel -->
+    <div class="flex-1 flex items-center justify-center px-5 py-10">
+      <div class="w-full max-w-sm">
+        <div class="lg:hidden text-center mb-8 flex justify-center">${logoLockup(36)}</div>
+
+        <div class="mb-6">
+          <h1 class="font-display text-xl font-bold mb-1">${isLogin ? 'Welcome back' : 'Create your account'}</h1>
+          <p class="text-sm text-gray-400">${isLogin ? 'Sign in to reach the service desk.' : 'Set up access to raise tickets and bookings.'}</p>
+        </div>
+
+        <div class="flex bg-gray-100 rounded-xl p-1 mb-6">
+          <button onclick="setState({authMode:'login',error:null})" class="flex-1 text-sm font-medium py-2 rounded-lg transition ${isLogin ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500'}">Sign in</button>
+          <button onclick="setState({authMode:'signup',error:null})" class="flex-1 text-sm font-medium py-2 rounded-lg transition ${!isLogin ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500'}">Sign up</button>
+        </div>
+
+        ${state.error ? `<div class="bg-red-50 text-red-600 text-sm rounded-xl px-3 py-2 mb-4">${esc(state.error)}</div>` : ''}
+
+        ${isLogin ? `
+        <form id="login-form" class="space-y-3">
+          ${authField({ name: 'email', type: 'email', placeholder: 'Email', iconName: 'mail', extra: 'required' })}
+          ${authField({ name: 'password', type: 'password', placeholder: 'Password', iconName: 'lock', extra: 'required' })}
+          <button class="w-full bg-gray-900 hover:bg-gray-800 transition text-white rounded-xl py-3 text-sm font-medium">Sign in</button>
+        </form>` : `
+        <form id="signup-form" class="space-y-3">
+          ${authField({ name: 'name', placeholder: 'Full name', iconName: 'user', extra: 'required' })}
+          ${authField({ name: 'email', type: 'email', placeholder: 'Email', iconName: 'mail', extra: 'required' })}
+          ${authField({ name: 'password', type: 'password', placeholder: 'Password (min. 6 characters)', iconName: 'lock', extra: 'required minlength="6"' })}
+          <button class="w-full bg-gray-900 hover:bg-gray-800 transition text-white rounded-xl py-3 text-sm font-medium">Create account</button>
+        </form>`}
+
+        <p class="text-xs text-gray-400 text-center mt-6">
+          ${isLogin ? "New here?" : "Already have an account?"}
+          <button onclick="setState({authMode:'${isLogin ? 'signup' : 'login'}',error:null})" class="text-red-600 font-medium">${isLogin ? 'Create an account' : 'Sign in'}</button>
+        </p>
       </div>
-
-      ${state.error ? `<div class="bg-red-50 text-red-600 text-sm rounded-xl px-3 py-2 mb-4">${esc(state.error)}</div>` : ''}
-
-      ${isLogin ? `
-      <form id="login-form" class="space-y-3">
-        <input required name="email" type="email" placeholder="Email" class="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm">
-        <input required name="password" type="password" placeholder="Password" class="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm">
-        <button class="w-full bg-gray-900 text-white rounded-xl py-3 text-sm font-medium">Sign in</button>
-      </form>` : `
-      <form id="signup-form" class="space-y-3">
-        <input required name="name" placeholder="Full name" class="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm">
-        <input required name="email" type="email" placeholder="Email" class="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm">
-        <input required name="password" type="password" minlength="6" placeholder="Password (min. 6 characters)" class="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm">
-        <button class="w-full bg-gray-900 text-white rounded-xl py-3 text-sm font-medium">Create account</button>
-      </form>`}
     </div>
   </div>`;
 }
