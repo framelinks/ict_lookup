@@ -3,7 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const swaggerUi = require('swagger-ui-express');
 const openapiSpec = require('./docs/openapi.json');
-
+const path = require('path');
 const authRoutes = require('./src/routes/auth');
 const ticketRoutes = require('./src/routes/tickets');
 const bookingRoutes = require('./src/routes/bookings');
